@@ -1,4 +1,4 @@
-from telethon import events, Button
+from telethon import events, Button, errors
 from config import bot, ADMIN_ID
 from state import GLOBAL_CONFIG
 
@@ -67,14 +67,17 @@ async def show_admin_dashboard(event):
         [Button.inline("ℹ️ Bantuan", b"cmd_admin_help"), Button.inline("❌ Close", b"close_menu")]
     ]
     
-    # PERBAIKAN: Cek tipe event agar tidak error "MessageIdInvalidError"
-    # NewMessage (teks dari user) -> Tidak bisa diedit -> Pakai respond()
-    # CallbackQuery (klik tombol) -> Bisa diedit -> Pakai edit()
-    if isinstance(event, events.CallbackQuery.Event):
-        await event.edit(text, buttons=buttons)
-    else:
-        await event.respond(text, buttons=buttons)
+    # PERBAIKAN: Menangani MessageNotModifiedError
+    try:
+        if isinstance(event, events.CallbackQuery.Event):
+            await event.edit(text, buttons=buttons)
+        else:
+            await event.respond(text, buttons=buttons)
+    except errors.MessageNotModifiedError:
+        pass # Abaikan error jika pesan tidak berubah
 
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_help"))
 async def cb_admin_help(event):
-    await event.edit("Gunakan tombol menu untuk navigasi.", buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
+    try:
+        await event.edit("Gunakan tombol menu untuk navigasi.", buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
+    except errors.MessageNotModifiedError: pass
