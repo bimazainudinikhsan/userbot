@@ -266,6 +266,13 @@ async def cb_sf_done(event):
     try: await event.delete()
     except: pass
 
+# --- CALLBACK UNTUK PINDAH KE MENU SETTING DARI TOMBOL FAKTUR ---
+@bot.on(events.CallbackQuery(pattern=b"goto_set_faktur"))
+async def cb_goto_set_faktur(event):
+    user_id = event.sender_id
+    # Hapus pesan faktur start sebelumnya jika perlu, atau edit saja
+    await show_setting_menu(event, user_id)
+
 @bot.on(events.NewMessage(incoming=True))
 async def bot_setting_listener(event):
     user_id = event.sender_id
@@ -402,9 +409,13 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             'storage': user_storage
         }
         
+        # === MODIFIKASI: Menambahkan Tombol .set_faktur ===
         await event.edit(
             "📸 **VERIFIKASI DEVICE**\n\n"
-            "Mohon kirimkan **Screenshot Tampilan HP** Anda sekarang sebelum melanjutkan."
+            "Mohon kirimkan **Screenshot Tampilan HP** Anda sekarang sebelum melanjutkan.\n\n"
+            "_.faktur (cara pakai)_\n"
+            "_.set_faktur (tombol di bawah)_",
+            buttons=[[Button.inline("⚙️ Atur Faktur (.set_faktur)", b"goto_set_faktur")]]
         )
 
     # --- LISTENER INPUT ---
