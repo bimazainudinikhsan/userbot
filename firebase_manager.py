@@ -3,6 +3,7 @@ from firebase_admin import credentials, db
 import os
 import json
 import sys
+import time
 
 # ==========================================
 # 1. KONEKSI KE FIREBASE
@@ -10,36 +11,51 @@ import sys
 
 CREDENTIAL_FILE = "credentials.json"
 
-# PENTING: URL INI DISESUAIKAN DENGAN SCREENSHOT ANDA
-# Hapus '-default-rtdb' karena project Anda menggunakan format lama/region US-Central1 standar
+# URL YANG BENAR BERDASARKAN JSON "project_info" ANDA:
 DATABASE_URL = "https://clash-of-clans-401b1.firebaseio.com/"
 
 def init_firebase():
-    # Cek jika app sudah ada, delete dulu biar refresh (berguna saat reload module)
+    # Reset app jika module di-reload
     if firebase_admin._apps:
         firebase_admin.delete_app(firebase_admin.get_app())
 
     if os.path.exists(CREDENTIAL_FILE):
         try:
+            # Load credential
             cred = credentials.Certificate(CREDENTIAL_FILE)
+            
+            # Init App
             firebase_admin.initialize_app(cred, {
                 'databaseURL': DATABASE_URL,
-                'httpTimeout': 30 
+                'httpTimeout': 30
             })
-            print(f"[Firebase] Credential dimuat. Target URL: {DATABASE_URL}")
             
-            # --- TES KONEKSI NYATA ---
+            print(f"[Firebase] Credential dimuat.")
+            print(f"[Firebase] Target URL: {DATABASE_URL}")
+            
+            # --- TES KONEKSI & DIAGNOSA ---
             try:
-                print("[Firebase] Mencoba handshake ke server...")
-                # Kita baca path root '/' untuk memastikan akses penuh
-                # Jika unauthorized, ini akan langsung error
+                print("[Firebase] Melakukan handshake ke server...")
+                # Tes baca root
                 db.reference().get(shallow=True) 
-                print("✅ [Firebase] KONEKSI SUKSES! Server menerima kredensial.")
+                print("✅ [Firebase] KONEKSI SUKSES! Database terbaca.")
+                
             except Exception as e:
+                err_msg = str(e)
                 print(f"❌ [Firebase] GAGAL AKSES!")
-                print(f"   Error: {e}")
-                print(f"   Solusi: Cek 'credentials.json' (Service Account) di Console Firebase > Project Settings > Service Accounts.")
-                print(f"   Pastikan akun tersebut aktif dan memiliki permission 'Firebase Admin SDK Administrator Service Agent'.")
+                print(f"   Error: {err_msg}")
+                
+                if "401" in err_msg or "Unauthorized" in err_msg:
+                    print("\n⚠️ PENYEBAB 'UNAUTHORIZED REQUEST':")
+                    print("1. JAM SERVER TIDAK PAS: Token Firebase butuh waktu yang sinkron.")
+                    print(f"   Waktu Server Anda: {time.ctime()}")
+                    print("   -> Solusi: Jalankan 'sudo ntpdate pool.ntp.org' di terminal VPS.")
+                    print("2. IZIN AKUN: Service Account di 'credentials.json' tidak punya role Admin.")
+                    print("   -> Solusi: Buka Firebase Console > IAM > Edit akun service account ini > Tambah Role 'Firebase Realtime Database Admin'.")
+                elif "404" in err_msg:
+                    print("\n⚠️ PENYEBAB '404 NOT FOUND':")
+                    print("1. Database belum dibuat di Console.")
+                    print("2. Salah URL (Tapi URL ini sudah sesuai file JSON Anda).")
 
         except Exception as e:
             print(f"[Firebase] Gagal Inisialisasi SDK: {e}")
@@ -138,12 +154,10 @@ if __name__ == "__main__":
         root_data = db.reference().get()
         if root_data:
             print("✅ Baca Root Sukses!")
-            # Tampilkan sedikit data untuk verifikasi
             print(f"   Keys ditemukan: {list(root_data.keys())[:5]} ...")
             apps = get_all_apps()
             print(f"✅ Fungsi get_all_apps() mengembalikan: {apps}")
         else:
             print("⚠️ Baca Root Sukses tapi data KOSONG (None).")
-            print("   (Ini normal jika database memang belum diisi data apapun)")
     except Exception as e:
         print(f"❌ GAGAL MEMBACA DATABASE! Error: {e}")
