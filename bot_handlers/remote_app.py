@@ -17,9 +17,10 @@ async def cb_remote_dashboard(event):
     
     apps = get_all_apps()
     
+    # Jika apps kosong, kemungkinan koneksi DB bermasalah atau memang belum ada data
     if not apps:
         try:
-            return await event.edit("⚠️ **Tidak ada aplikasi ditemukan di database.**", 
+            return await event.edit("⚠️ **Tidak ada aplikasi ditemukan di database.**\nCek koneksi Firebase atau isi data 'aplikasi'.", 
                                     buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
         except errors.MessageNotModifiedError: return
 
@@ -29,7 +30,7 @@ async def cb_remote_dashboard(event):
     # Buat tombol per aplikasi (2 kolom)
     row = []
     for app_name in apps:
-        # Pastikan app_name string bersih
+        # Pastikan app_name string bersih tanpa spasi
         clean_name = str(app_name).strip()
         row.append(Button.inline(f"📂 {clean_name}", data=f"rapp_view_{clean_name}"))
         if len(row) == 2:
@@ -56,29 +57,34 @@ async def cb_remote_view_app(event):
     
     total_dev = len(devices) if devices else 0
     
-    # Fallback jika config kosong (Database node belum lengkap)
-    if not config:
-        config = {}
-
-    # Helper untuk display data kosong
-    def val_or_empty(key, default="-(Kosong)-"):
+    # === LOGIKA PENANGANAN ERROR DATA ===
+    status_db = "✅ Data Dimuat"
+    if config is None:
+        status_db = "⚠️ Config Tidak Ditemukan"
+        config = {} # Isi dict kosong agar tidak crash
+    
+    # Helper untuk display data agar tidak muncul "NULL"
+    def format_val(key):
         val = config.get(key)
-        # Jika val None atau string kosong atau string "NULL" dari firebase_manager
-        if val is None or val == "" or val == "NULL":
-            return default
-        return val
+        if val is None or str(val).lower() == "null" or str(val).strip() == "":
+            return "-(Belum Diset)-"
+        return str(val)
 
-    pin_val = val_or_empty('pin')
-    pass_val = val_or_empty('admin_pass')
-    text_val = str(val_or_empty('text'))
+    pin_val = format_val('pin')
+    pass_val = format_val('admin_pass')
+    text_val = format_val('text')
+    
+    # Potong teks pesan layar jika terlalu panjang
+    if len(text_val) > 50: text_val = text_val[:50] + "..."
 
     msg = (
         f"📂 **APLIKASI: {app_name.upper()}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
+        f"📡 **Status DB:** `{status_db}`\n"
         f"🔑 **PIN Kiosk:** `{pin_val}`\n"
         f"🔐 **Admin Pass:** `{pass_val}`\n"
         f"📱 **Total Device:** {total_dev}\n"
-        f"📝 **Pesan Layar:**\n_{text_val[:100]}..._\n"
+        f"📝 **Pesan Layar:**\n_{text_val}_\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
     
@@ -100,24 +106,32 @@ async def cb_remote_device_list(event):
     devices = get_app_devices(app_name)
     
     if not devices:
-        return await event.answer("⚠️ Belum ada perangkat yang terhubung.", alert=True)
+        # Tampilkan alert tapi jangan crash/stuck
+        await event.answer("⚠️ Belum ada perangkat yang terhubung.", alert=True)
+        # Tetap edit pesan agar user tau list kosong
+        msg = f"📱 **LIST DEVICE ({app_name})**\n\n❌ Belum ada perangkat terdeteksi."
+        buttons = [[Button.inline("⬅️ Kembali", data=f"rapp_view_{app_name}")]]
+        return await event.edit(msg, buttons=buttons)
         
     msg = f"📱 **LIST DEVICE ({app_name})**\nPilih device untuk aksi remote:"
     buttons = []
     
-    # Batasi tampilan jika device terlalu banyak (misal max 10)
+    # Batasi tampilan jika device terlalu banyak (misal max 10 agar tidak error limit telegram)
     limit = 10
     count = 0
     
     for dev_id, info in devices.items():
         if count >= limit: break
         
-        dev_name = info.get('nama_perangkat', 'Unknown')
+        dev_name = info.get('nama_perangkat', 'Unknown Device')
         batt = info.get('persen_baterai', '?')
         
         btn_text = f"{dev_name} ({batt}%)"
         buttons.append([Button.inline(btn_text, data=f"rapp_act_{app_name}_{dev_id}")])
         count += 1
+    
+    if len(devices) > limit:
+        msg += f"\n\n_(Menampilkan 10 dari {len(devices)} device)_"
         
     buttons.append([Button.inline("⬅️ Kembali", data=f"rapp_view_{app_name}")])
     try:
@@ -155,16 +169,19 @@ async def cb_remote_device_action_menu(event):
     devices = get_app_devices(app_name)
     dev_info = devices.get(dev_id, {})
     
-    status = dev_info.get('status_keluar_mode_kios', '-')
-    waktu = dev_info.get('waktu_start', '-')
+    # Gunakan default value jika data tidak lengkap
+    nm = dev_info.get('nama_perangkat', 'Unknown')
+    bt = dev_info.get('persen_baterai', 0)
+    st = dev_info.get('status_keluar_mode_kios', 'Unknown')
+    wk = dev_info.get('waktu_start', '-')
     
     msg = (
         f"🎮 **REMOTE DEVICE CONTROL**\n"
         f"ID: `{dev_id}`\n"
-        f"Nama: **{dev_info.get('nama_perangkat', 'Unknown')}**\n"
-        f"Baterai: {dev_info.get('persen_baterai', 0)}%\n"
-        f"Status: `{status}`\n"
-        f"Online: {waktu}\n"
+        f"Nama: **{nm}**\n"
+        f"Baterai: {bt}%\n"
+        f"Status: `{st}`\n"
+        f"Online: {wk}\n"
     )
     
     buttons = [
@@ -211,15 +228,21 @@ async def cb_remote_exec_action(event):
         
         devices = get_app_devices(target_app)
         dev_info = devices.get(target_dev, {})
+        # Update tampilan lokal
         dev_info['status_keluar_mode_kios'] = db_value 
+        
+        # Re-render menu
+        nm = dev_info.get('nama_perangkat', 'Unknown')
+        bt = dev_info.get('persen_baterai', 0)
+        wk = dev_info.get('waktu_start', '-')
         
         msg = (
             f"🎮 **REMOTE DEVICE CONTROL**\n"
             f"ID: `{target_dev}`\n"
-            f"Nama: **{dev_info.get('nama_perangkat', 'Unknown')}**\n"
-            f"Baterai: {dev_info.get('persen_baterai', 0)}%\n"
+            f"Nama: **{nm}**\n"
+            f"Baterai: {bt}%\n"
             f"Status: `{db_value}` (UPDATED)\n"
-            f"Online: {dev_info.get('waktu_start', '-')}\n"
+            f"Online: {wk}\n"
         )
         buttons = [
             [Button.inline("🔓 Buka Paksa (Unlock)", data=f"rapp_do_{target_app}_{target_dev}_buka")],
@@ -269,29 +292,33 @@ async def handle_remote_input(event):
             
         del REMOTE_STATE[user_id]
         
-        # Kembali ke menu view
+        # Kembali ke menu view (re-fetch config)
         config = get_app_config(app_name)
         if not config: config = {} 
         
         devices = get_app_devices(app_name)
         total_dev = len(devices) if devices else 0
         
-        def val_or_empty(key, default="-(Kosong)-"):
+        # Reuse formatter logic (bisa dibuat fungsi global kalau mau lebih rapi)
+        def format_val(key):
             val = config.get(key)
-            if val is None or val == "" or val == "NULL": return default
-            return val
+            if val is None or str(val).lower() == "null" or str(val).strip() == "":
+                return "-(Belum Diset)-"
+            return str(val)
         
-        pin_val = val_or_empty('pin')
-        pass_val = val_or_empty('admin_pass')
-        text_val = str(val_or_empty('text'))
+        pin_val = format_val('pin')
+        pass_val = format_val('admin_pass')
+        text_val = format_val('text')
+        if len(text_val) > 50: text_val = text_val[:50] + "..."
         
         msg = (
             f"📂 **APLIKASI: {app_name.upper()}**\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"📡 **Status DB:** `Updated`\n"
             f"🔑 **PIN Kiosk:** `{pin_val}`\n"
             f"🔐 **Admin Pass:** `{pass_val}`\n"
             f"📱 **Total Device:** {total_dev}\n"
-            f"📝 **Pesan Layar:**\n_{text_val[:100]}..._\n"
+            f"📝 **Pesan Layar:**\n_{text_val}_\n"
             f"━━━━━━━━━━━━━━━━━━"
         )
         buttons = [
