@@ -45,14 +45,7 @@ async def cb_remote_dashboard(event):
 @bot.on(events.CallbackQuery(pattern=r"rapp_view_(.+)"))
 async def cb_remote_view_app(event):
     """Detail Aplikasi: Info PIN & Config"""
-    # Ambil app_name dari data callback
-    # Format data: rapp_view_{nama_aplikasi}
-    # Kita split, ambil elemen ke-2 sampai akhir (jika nama app mengandung underscore)
-    # Contoh: rapp_view_my_app -> parts=["rapp", "view", "my", "app"] -> app_name="my_app"
-    
-    data_parts = event.data.decode().split("_")
-    # Karena prefix 'rapp_view_' memiliki 2 underscore, kita ambil index ke-2 dst
-    # Namun cara paling aman adalah replace prefix
+    # Parsing nama aplikasi dengan aman (menangani nama dengan underscore)
     full_data = event.data.decode()
     app_name = full_data.replace("rapp_view_", "", 1)
     
@@ -61,18 +54,23 @@ async def cb_remote_view_app(event):
     
     total_dev = len(devices) if devices else 0
     
+    # PERBAIKAN: Jika config tidak ditemukan/kosong di DB, gunakan nilai Default/NULL
+    # agar menu tetap bisa dibuka dan list device tetap bisa diakses.
     if not config:
-        # Debugging: Coba print alasan kenapa config None (opsional, bisa dilihat di terminal)
-        print(f"[DEBUG] Gagal load config untuk app: {app_name}")
-        return await event.answer(f"❌ Gagal memuat data aplikasi '{app_name}'. Cek Database.", alert=True)
+        config = {} 
+
+    # Gunakan .get() dengan default value "NULL" atau "-"
+    pin_val = config.get('pin') or "NULL"
+    pass_val = config.get('admin_pass') or "NULL"
+    text_val = str(config.get('text', 'NULL'))
 
     msg = (
         f"📂 **APLIKASI: {app_name.upper()}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔑 **PIN Kiosk:** `{config.get('pin', '-')}`\n"
-        f"🔐 **Admin Pass:** `{config.get('admin_pass', '-')}`\n"
+        f"🔑 **PIN Kiosk:** `{pin_val}`\n"
+        f"🔐 **Admin Pass:** `{pass_val}`\n"
         f"📱 **Total Device:** {total_dev}\n"
-        f"📝 **Pesan Layar:**\n_{str(config.get('text', '-'))[:100]}..._\n"
+        f"📝 **Pesan Layar:**\n_{text_val[:100]}..._\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
     
@@ -122,9 +120,7 @@ async def cb_remote_device_list(event):
 async def cb_remote_device_action_menu(event):
     """Menu Aksi untuk Satu Device"""
     prefix = f"rapp_act_"
-    # Decode full string
     full_data = event.data.decode()
-    # Format: rapp_act_{appname}_{devid}
     
     # Ambil sisa string setelah prefix
     data_content = full_data[len(prefix):]
@@ -141,7 +137,7 @@ async def cb_remote_device_action_menu(event):
             break
             
     if not app_name:
-        # Fallback split biasa (mungkin gagal jika nama aneh)
+        # Fallback split biasa
         parts = data_content.split("_")
         if len(parts) >= 2:
             app_name = parts[0]
@@ -178,7 +174,6 @@ async def cb_remote_exec_action(event):
     """Eksekusi Perintah Remote"""
     full_str = event.data.decode()
     # Format: rapp_do_{app}_{dev}_{action}
-    # Action selalu di akhir (buka/mulai)
     
     if full_str.endswith("_buka"):
         action = "buka"
@@ -211,7 +206,7 @@ async def cb_remote_exec_action(event):
         # Refresh menu dengan data terbaru
         devices = get_app_devices(target_app)
         dev_info = devices.get(target_dev, {})
-        # Update status lokal biar realtime di UI (meski di DB mungkin belum sync balik)
+        # Update status lokal biar realtime di UI
         dev_info['status_keluar_mode_kios'] = db_value 
         
         msg = (
@@ -237,7 +232,6 @@ async def cb_remote_exec_action(event):
 @bot.on(events.CallbackQuery(pattern=r"rapp_editpin_(.+)"))
 async def cb_remote_edit_pin(event):
     """Mode Edit PIN"""
-    # Parsing nama aplikasi yang lebih aman
     full_data = event.data.decode()
     app_name = full_data.replace("rapp_editpin_", "", 1)
     user_id = event.sender_id
@@ -273,16 +267,22 @@ async def handle_remote_input(event):
         
         # Kembali ke menu view
         config = get_app_config(app_name)
+        if not config: config = {} # Safe fallback juga disini
+        
         devices = get_app_devices(app_name)
         total_dev = len(devices) if devices else 0
+        
+        pin_val = config.get('pin') or "NULL"
+        pass_val = config.get('admin_pass') or "NULL"
+        text_val = str(config.get('text', 'NULL'))
         
         msg = (
             f"📂 **APLIKASI: {app_name.upper()}**\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔑 **PIN Kiosk:** `{config.get('pin', '-')}`\n"
-            f"🔐 **Admin Pass:** `{config.get('admin_pass', '-')}`\n"
+            f"🔑 **PIN Kiosk:** `{pin_val}`\n"
+            f"🔐 **Admin Pass:** `{pass_val}`\n"
             f"📱 **Total Device:** {total_dev}\n"
-            f"📝 **Pesan Layar:**\n_{str(config.get('text', '-'))[:100]}..._\n"
+            f"📝 **Pesan Layar:**\n_{text_val[:100]}..._\n"
             f"━━━━━━━━━━━━━━━━━━"
         )
         buttons = [
