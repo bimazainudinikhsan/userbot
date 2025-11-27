@@ -4,41 +4,47 @@ import os
 import json
 import sys
 
-# w==========================================
+# ==========================================
 # 1. KONEKSI KE FIREBASE
 # ==========================================
 
 CREDENTIAL_FILE = "credentials.json"
 
-# URL Database sesuai permintaan Anda
-DATABASE_URL = "https://clash-of-clans-401b1.firebaseio.com/"
+# PENTING: URL ini harus persis dengan yang ada di Firebase Console.
+# Error "Unauthorized request" biasanya terjadi karena URL salah.
+# Kita kembalikan ke format default yang benar:
+DATABASE_URL = "https://clash-of-clans-401b1-default-rtdb.firebaseio.com/"
 
 def init_firebase():
-    if not firebase_admin._apps:
-        if os.path.exists(CREDENTIAL_FILE):
-            try:
-                cred = credentials.Certificate(CREDENTIAL_FILE)
-                firebase_admin.initialize_app(cred, {
-                    'databaseURL': DATABASE_URL,
-                    'httpTimeout': 30 
-                })
-                print(f"[Firebase] Credential dimuat. URL: {DATABASE_URL}")
-                
-                # --- TES KONEKSI NYATA ---
-                try:
-                    print("[Firebase] Mencoba menghubungi server database...")
-                    # Tes baca root path ringan
-                    db.reference().child("test_connection").get() 
-                    print("✅ [Firebase] KONEKSI SUKSES! Bisa membaca data.")
-                except Exception as e:
-                    print(f"❌ [Firebase] GAGAL KONEKSI INTERNET/SERVER!")
-                    print(f"   Error Detail: {e}")
-                    print(f"   Saran: Cek koneksi internet VPS Anda. Pastikan bisa ping google.com")
+    # Cek jika app sudah ada, delete dulu biar refresh (berguna saat reload module)
+    if firebase_admin._apps:
+        firebase_admin.delete_app(firebase_admin.get_app())
 
+    if os.path.exists(CREDENTIAL_FILE):
+        try:
+            cred = credentials.Certificate(CREDENTIAL_FILE)
+            firebase_admin.initialize_app(cred, {
+                'databaseURL': DATABASE_URL,
+                'httpTimeout': 30 
+            })
+            print(f"[Firebase] Credential dimuat. Target URL: {DATABASE_URL}")
+            
+            # --- TES KONEKSI NYATA ---
+            try:
+                print("[Firebase] Mencoba handshake ke server...")
+                # Kita baca path root '/' untuk memastikan akses penuh
+                # Jika unauthorized, ini akan langsung error
+                db.reference().get(shallow=True) 
+                print("✅ [Firebase] KONEKSI SUKSES! Server menerima kredensial.")
             except Exception as e:
-                print(f"[Firebase] Gagal Inisialisasi SDK: {e}")
-        else:
-            print(f"[Firebase] File {CREDENTIAL_FILE} tidak ditemukan.")
+                print(f"❌ [Firebase] GAGAL AKSES!")
+                print(f"   Error: {e}")
+                print(f"   Solusi: Pastikan DATABASE_URL di baris 15 sama persis dengan di Console Firebase.")
+
+        except Exception as e:
+            print(f"[Firebase] Gagal Inisialisasi SDK: {e}")
+    else:
+        print(f"[Firebase] File {CREDENTIAL_FILE} tidak ditemukan.")
 
 init_firebase()
 
