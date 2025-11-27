@@ -630,26 +630,45 @@ async def cb_restart(event):
     await execute_restart_sequence(trigger_event=event)
 
 
+# ==================================================================
+# BAGIAN AUTO UPDATE & SHUTDOWN (DIPERBAIKI)
+# ==================================================================
+
 # --- HANDLER 2: PEMANTAU AUTO UPDATE (Otomatis) ---
 async def auto_update_watcher():
-    print("Auto-update watcher started...")
+    # 1. GUNAKAN PATH MUTLAK (Agar Bot tidak tersesat)
+    # Sesuaikan path ini dengan yang ada di autoupdate.sh Anda
+    TRIGGER_PATH = "/home/bmcodex/userbot/restart_trigger.txt"
+    
+    print(f"👀 Auto-update watcher berjalan... Memantau: {TRIGGER_PATH}")
+    
     while True:
-        # Cek apakah file penanda dari script bash ada
-        if os.path.exists("restart_trigger.txt"):
-            print("File trigger ditemukan! Memulai sequence restart...")
-            try:
-                os.remove("restart_trigger.txt") # Hapus file segera
-            except: pass
+        # Cek apakah file penanda ada di lokasi yang pasti
+        if os.path.exists(TRIGGER_PATH):
+            print("🚨 File trigger ditemukan! Memulai sequence restart...")
             
-            # Panggil fungsi inti TANPA event (None)
+            # Hapus file segera agar tidak restart berulang-ulang
+            try:
+                os.remove(TRIGGER_PATH) 
+            except Exception as e:
+                print(f"Gagal menghapus trigger: {e}")
+            
+            # Panggil fungsi inti TANPA event (None) -> Memicu Broadcast Admin
             await execute_restart_sequence(trigger_event=None)
         
-        await asyncio.sleep(10) # Cek setiap 10 detik
+        # Cek setiap 5 detik
+        await asyncio.sleep(5) 
+
 # --- JALANKAN WATCHER ---
-# Letakkan baris ini SEBELUM bot.run_until_disconnected()
-bot.loop.create_task(auto_update_watcher())
+# Pastikan kode ini tereksekusi saat bot nyala
+try:
+    bot.loop.create_task(auto_update_watcher())
+    print("✅ Task Auto-Update Watcher berhasil dipasang.")
+except Exception as e:
+    print(f"❌ Gagal memasang watcher: {e}")
+
 # ==================================================================
-# SHUTDOWN HANDLER (BARU)
+# SHUTDOWN HANDLER
 # ==================================================================
 
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_shutdown"))
