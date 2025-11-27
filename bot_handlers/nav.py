@@ -175,7 +175,7 @@ async def cb_feature_details(event):
     elif feature == "ping":
         help_text = (
             "🏓 **CEK PING**\n\n"
-            "Mengetahui latency userbot ke server Telegram.\n\n"
+            "Mengetahui latency userbot ke Server Telegram.\n\n"
             "**Cara Pakai:**\n"
             "Ketik `.ping` di chat manapun."
         )
