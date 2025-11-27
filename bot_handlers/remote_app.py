@@ -29,7 +29,9 @@ async def cb_remote_dashboard(event):
     # Buat tombol per aplikasi (2 kolom)
     row = []
     for app_name in apps:
-        row.append(Button.inline(f"📂 {app_name}", data=f"rapp_view_{app_name}"))
+        # Pastikan app_name string bersih
+        clean_name = str(app_name).strip()
+        row.append(Button.inline(f"📂 {clean_name}", data=f"rapp_view_{clean_name}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -40,29 +42,35 @@ async def cb_remote_dashboard(event):
     try:
         await event.edit(msg, buttons=buttons)
     except errors.MessageNotModifiedError:
-        pass # Abaikan jika pesan tidak berubah (misal double click)
+        pass 
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_view_(.+)"))
 async def cb_remote_view_app(event):
     """Detail Aplikasi: Info PIN & Config"""
-    # Parsing nama aplikasi dengan aman (menangani nama dengan underscore)
     full_data = event.data.decode()
-    app_name = full_data.replace("rapp_view_", "", 1)
+    # Replace prefix dan strip spasi agar nama aplikasi akurat
+    app_name = full_data.replace("rapp_view_", "", 1).strip()
     
     config = get_app_config(app_name)
     devices = get_app_devices(app_name)
     
     total_dev = len(devices) if devices else 0
     
-    # PERBAIKAN: Jika config tidak ditemukan/kosong di DB, gunakan nilai Default/NULL
-    # agar menu tetap bisa dibuka dan list device tetap bisa diakses.
+    # Fallback jika config kosong (Database node belum lengkap)
     if not config:
-        config = {} 
+        config = {}
 
-    # Gunakan .get() dengan default value "NULL" atau "-"
-    pin_val = config.get('pin') or "NULL"
-    pass_val = config.get('admin_pass') or "NULL"
-    text_val = str(config.get('text', 'NULL'))
+    # Helper untuk display data kosong
+    def val_or_empty(key, default="-(Kosong)-"):
+        val = config.get(key)
+        # Jika val None atau string kosong atau string "NULL" dari firebase_manager
+        if val is None or val == "" or val == "NULL":
+            return default
+        return val
+
+    pin_val = val_or_empty('pin')
+    pass_val = val_or_empty('admin_pass')
+    text_val = str(val_or_empty('text'))
 
     msg = (
         f"📂 **APLIKASI: {app_name.upper()}**\n"
@@ -87,7 +95,7 @@ async def cb_remote_view_app(event):
 async def cb_remote_device_list(event):
     """List Perangkat yang Terhubung"""
     full_data = event.data.decode()
-    app_name = full_data.replace("rapp_devlist_", "", 1)
+    app_name = full_data.replace("rapp_devlist_", "", 1).strip()
     
     devices = get_app_devices(app_name)
     
@@ -122,22 +130,21 @@ async def cb_remote_device_action_menu(event):
     prefix = f"rapp_act_"
     full_data = event.data.decode()
     
-    # Ambil sisa string setelah prefix
     data_content = full_data[len(prefix):]
     
-    # Cari aplikasi yang cocok dari list apps (agar parsing akurat)
     apps = get_all_apps()
     app_name = None
     dev_id = None
     
+    # Logic matching yang lebih robust
     for app in apps:
-        if data_content.startswith(app + "_"):
-            app_name = app
-            dev_id = data_content[len(app)+1:]
+        app_clean = str(app).strip()
+        if data_content.startswith(app_clean + "_"):
+            app_name = app_clean
+            dev_id = data_content[len(app_clean)+1:]
             break
             
     if not app_name:
-        # Fallback split biasa
         parts = data_content.split("_")
         if len(parts) >= 2:
             app_name = parts[0]
@@ -154,8 +161,8 @@ async def cb_remote_device_action_menu(event):
     msg = (
         f"🎮 **REMOTE DEVICE CONTROL**\n"
         f"ID: `{dev_id}`\n"
-        f"Nama: **{dev_info.get('nama_perangkat')}**\n"
-        f"Baterai: {dev_info.get('persen_baterai')}%\n"
+        f"Nama: **{dev_info.get('nama_perangkat', 'Unknown')}**\n"
+        f"Baterai: {dev_info.get('persen_baterai', 0)}%\n"
         f"Status: `{status}`\n"
         f"Online: {waktu}\n"
     )
@@ -173,18 +180,16 @@ async def cb_remote_device_action_menu(event):
 async def cb_remote_exec_action(event):
     """Eksekusi Perintah Remote"""
     full_str = event.data.decode()
-    # Format: rapp_do_{app}_{dev}_{action}
     
     if full_str.endswith("_buka"):
         action = "buka"
-        db_value = "sukses" # Value DB untuk unlock
+        db_value = "sukses" 
     elif full_str.endswith("_mulai"):
         action = "mulai"
-        db_value = "mulai" # Value DB untuk lock
+        db_value = "mulai" 
     else:
         return await event.answer("❌ Aksi tidak valid.", alert=True)
         
-    # Parsing App & Dev ID (menghapus prefix 'rapp_do_' dan suffix '_{action}')
     base_data = full_str[8:-(len(action)+1)]
     
     apps = get_all_apps()
@@ -192,9 +197,10 @@ async def cb_remote_exec_action(event):
     target_dev = None
     
     for app in apps:
-        if base_data.startswith(app + "_"):
-            target_app = app
-            target_dev = base_data[len(app)+1:]
+        app_clean = str(app).strip()
+        if base_data.startswith(app_clean + "_"):
+            target_app = app_clean
+            target_dev = base_data[len(app_clean)+1:]
             break
             
     if not target_app:
@@ -203,19 +209,17 @@ async def cb_remote_exec_action(event):
     if remote_device_action(target_app, target_dev, db_value):
         await event.answer(f"✅ Perintah '{action.upper()}' dikirim!", alert=True)
         
-        # Refresh menu dengan data terbaru
         devices = get_app_devices(target_app)
         dev_info = devices.get(target_dev, {})
-        # Update status lokal biar realtime di UI
         dev_info['status_keluar_mode_kios'] = db_value 
         
         msg = (
             f"🎮 **REMOTE DEVICE CONTROL**\n"
             f"ID: `{target_dev}`\n"
-            f"Nama: **{dev_info.get('nama_perangkat')}**\n"
-            f"Baterai: {dev_info.get('persen_baterai')}%\n"
+            f"Nama: **{dev_info.get('nama_perangkat', 'Unknown')}**\n"
+            f"Baterai: {dev_info.get('persen_baterai', 0)}%\n"
             f"Status: `{db_value}` (UPDATED)\n"
-            f"Online: {dev_info.get('waktu_start')}\n"
+            f"Online: {dev_info.get('waktu_start', '-')}\n"
         )
         buttons = [
             [Button.inline("🔓 Buka Paksa (Unlock)", data=f"rapp_do_{target_app}_{target_dev}_buka")],
@@ -233,7 +237,7 @@ async def cb_remote_exec_action(event):
 async def cb_remote_edit_pin(event):
     """Mode Edit PIN"""
     full_data = event.data.decode()
-    app_name = full_data.replace("rapp_editpin_", "", 1)
+    app_name = full_data.replace("rapp_editpin_", "", 1).strip()
     user_id = event.sender_id
     
     REMOTE_STATE[user_id] = {"app": app_name, "action": "edit_pin"}
@@ -267,14 +271,19 @@ async def handle_remote_input(event):
         
         # Kembali ke menu view
         config = get_app_config(app_name)
-        if not config: config = {} # Safe fallback juga disini
+        if not config: config = {} 
         
         devices = get_app_devices(app_name)
         total_dev = len(devices) if devices else 0
         
-        pin_val = config.get('pin') or "NULL"
-        pass_val = config.get('admin_pass') or "NULL"
-        text_val = str(config.get('text', 'NULL'))
+        def val_or_empty(key, default="-(Kosong)-"):
+            val = config.get(key)
+            if val is None or val == "" or val == "NULL": return default
+            return val
+        
+        pin_val = val_or_empty('pin')
+        pass_val = val_or_empty('admin_pass')
+        text_val = str(val_or_empty('text'))
         
         msg = (
             f"📂 **APLIKASI: {app_name.upper()}**\n"
