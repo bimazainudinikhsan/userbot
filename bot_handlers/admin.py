@@ -670,7 +670,7 @@ async def cb_shutdown_execute(event):
     if event.sender_id != ADMIN_ID: return
     
     await event.answer("🔴 Mematikan system...", alert=True)
-    msg = await event.edit("🔴 **SYSTEM SHUTDOWN**\n\nSedang mengirim pesan perpisahan...")
+    msg = await event.edit("🔴 **SYSTEM SHUTDOWN**\n\nSedang mengirim pesan perpisahan..")
     
     members = get_all_members_safe()
     count = 0
