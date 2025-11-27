@@ -10,10 +10,9 @@ import sys
 
 CREDENTIAL_FILE = "credentials.json"
 
-# PENTING: URL ini harus persis dengan yang ada di Firebase Console.
-# Error "Unauthorized request" biasanya terjadi karena URL salah.
-# Kita kembalikan ke format default yang benar:
-DATABASE_URL = "https://clash-of-clans-401b1-default-rtdb.firebaseio.com/"
+# PENTING: URL INI DISESUAIKAN DENGAN SCREENSHOT ANDA
+# Hapus '-default-rtdb' karena project Anda menggunakan format lama/region US-Central1 standar
+DATABASE_URL = "https://clash-of-clans-401b1.firebaseio.com/"
 
 def init_firebase():
     # Cek jika app sudah ada, delete dulu biar refresh (berguna saat reload module)
@@ -39,7 +38,8 @@ def init_firebase():
             except Exception as e:
                 print(f"❌ [Firebase] GAGAL AKSES!")
                 print(f"   Error: {e}")
-                print(f"   Solusi: Pastikan DATABASE_URL di baris 15 sama persis dengan di Console Firebase.")
+                print(f"   Solusi: Cek 'credentials.json' (Service Account) di Console Firebase > Project Settings > Service Accounts.")
+                print(f"   Pastikan akun tersebut aktif dan memiliki permission 'Firebase Admin SDK Administrator Service Agent'.")
 
         except Exception as e:
             print(f"[Firebase] Gagal Inisialisasi SDK: {e}")
@@ -138,10 +138,12 @@ if __name__ == "__main__":
         root_data = db.reference().get()
         if root_data:
             print("✅ Baca Root Sukses!")
+            # Tampilkan sedikit data untuk verifikasi
             print(f"   Keys ditemukan: {list(root_data.keys())[:5]} ...")
             apps = get_all_apps()
             print(f"✅ Fungsi get_all_apps() mengembalikan: {apps}")
         else:
             print("⚠️ Baca Root Sukses tapi data KOSONG (None).")
+            print("   (Ini normal jika database memang belum diisi data apapun)")
     except Exception as e:
         print(f"❌ GAGAL MEMBACA DATABASE! Error: {e}")
