@@ -1,0 +1,11 @@
+# Library Utama untuk Interaksi dengan Telegram API
+telethon
+
+# Library untuk Koneksi dan Operasi ke Google Sheets (Database)
+gspread
+oauth2client
+
+# Library pendukung Telethon dan operasi asinkron
+# Biasanya sudah terinstal, tapi dicantumkan untuk kelengkapan
+asyncio
+requests

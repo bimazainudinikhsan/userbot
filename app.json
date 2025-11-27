@@ -1,0 +1,27 @@
+{
+  "name": "BmCodex Premium",
+  "description": "Premium Telethon Userbot",
+  "repository": "https://github.com/bimazainudinikhsan/BmCodex",
+  "env": {
+    "API_ID": {
+      "required": true
+    },
+    "API_HASH": {
+      "required": true
+    },
+    "SESSION_STRING": {
+      "required": true
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "free"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}

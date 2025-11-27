@@ -1,0 +1,69 @@
+{
+    "8022699623": {
+        "messages": [
+            "haii",
+            "aku",
+            "boleh kenalan",
+            "baru di sini",
+            "gimana ya"
+        ],
+        "min_delay": 3.0,
+        "max_delay": 5.5
+    },
+    "8094929215": {
+        "messages": [],
+        "min_delay": 4.0,
+        "max_delay": 6.0
+    },
+    "8350078108": {
+        "messages": [
+            "yang mau vc? aku off cam tapi @violaangelitaq",
+            "sini aku temenin @violaangelitaq",
+            "Yang bisa rate sini dong @violaangelitaq",
+            "nd co hyprwrrr @violaangelitaq",
+            "Joiin di bioo ka @violaangelitaq",
+            "cari temen cowo @violaangelitaq"
+        ],
+        "min_delay": 7.5,
+        "max_delay": 11.5
+    },
+    "8419664841": {
+        "messages": [
+            "Yang bisa rate sini dong",
+            "cri co yg mau tmnin ak",
+            "sini aku temenin @sallmaadistaw",
+            "Joiin di bioo ka @sallmaadistaw",
+            "Asupan enak sini @sallmaadistaw",
+            "Joiin di bioo ka @sallmaadistaw"
+        ],
+        "min_delay": 6.0,
+        "max_delay": 8.0
+    },
+    "7230535933": {
+        "messages": [
+            "aange tawuwww\ud83d\ude22 ![@sallmaadistaw](https://t.me/sallmaadistaw)",
+            "halauw\ud83d\udc9f\ud83d\udc9f ![@sallmaadistaw](https://t.me/sallmaadistaw)",
+            "calldng ak mw bbo\ud83d\ude1d ![@sallmaadistaw](https://t.me/sallmaadistaw)"
+        ],
+        "min_delay": 5.0,
+        "max_delay": 10.0
+    },
+    "8505538867": {
+        "messages": [
+            "sini aku temenin @sallmaadistaw",
+            "yang mau vc ? aku off cam tapi @sallmaadistaw"
+        ],
+        "min_delay": 7.0,
+        "max_delay": 10.0
+    },
+    "8579409848": {
+        "messages": [
+            "\ud83d\ude2d",
+            "\ud83d\ude33\ud83d\ude48",
+            "\ud83d\ude1c\ud83e\udd17",
+            "\ud83d\ude31\ud83e\udee0\ud83e\udee0"
+        ],
+        "min_delay": 10.0,
+        "max_delay": 25.0
+    }
+}

@@ -1,0 +1,63 @@
+{
+    "8022699623": {
+        "rounddown": true,
+        "ppn": true,
+        "template_bank": "Payment hanya Menggunakan QRIS yang telah kami kirimkan",
+        "template_note": "SILAHKAN PAYMENT SESUAI NOMINAL DIATAS",
+        "default_items": [
+            {
+                "desc": "Biaya admin Penanganan",
+                "price": 35000
+            },
+            {
+                "desc": "Clean File & Private Galery",
+                "price": 20000
+            },
+            {
+                "desc": "Clear Virus LCD & Bug",
+                "price": 30000
+            },
+            {
+                "desc": "Disable Home error",
+                "price": 25000
+            },
+            {
+                "desc": "TURN OFF Flash Light",
+                "price": 25000
+            },
+            {
+                "desc": "Unlock Ransomeware T1",
+                "price": 20000
+            },
+            {
+                "desc": "Unlock Ransomeware T2",
+                "price": 20000
+            }
+        ],
+        "rounddown_limit": 35000
+    },
+    "8350078108": {
+        "rounddown_math": false,
+        "rounddown_limit": 1000,
+        "ppn": false,
+        "template_bank": "-",
+        "template_note": "-",
+        "default_items": []
+    },
+    "8579409848": {
+        "rounddown_math": false,
+        "rounddown_limit": 1000,
+        "ppn": false,
+        "template_bank": "-",
+        "template_note": "-",
+        "default_items": []
+    },
+    "8094929215": {
+        "rounddown_math": false,
+        "rounddown_limit": 1000,
+        "ppn": false,
+        "template_bank": "-",
+        "template_note": "-",
+        "default_items": []
+    }
+}
