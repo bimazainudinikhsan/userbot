@@ -5,6 +5,7 @@ from config import bot, ADMIN_ID
 from database import find_member_row
 from .admin import show_admin_dashboard
 from modules.autoreply import get_user_settings
+from modules.faktur import show_setting_menu # IMPORT FUNGSI DARI FAKTUR
 from state import ACTIVE_USERBOTS
 
 # ==========================================
@@ -149,20 +150,38 @@ async def cb_quick_toggle_ar(event):
 # 4. HANDLER INFO FITUR & STATUS LAINNYA
 # ==========================================
 
+# Handler khusus untuk tombol trigger .set_faktur
+@bot.on(events.CallbackQuery(pattern=b"trigger_set_faktur"))
+async def cb_trigger_set_faktur(event):
+    user_id = event.sender_id
+    # Langsung panggil fungsi menu setting dari modules/faktur.py
+    # Ini akan mengedit pesan saat ini menjadi menu setting faktur
+    await show_setting_menu(event, user_id)
+
 @bot.on(events.CallbackQuery(pattern=r"ub_(.+)"))
 async def cb_feature_details(event):
     data = event.data.decode()
     feature = data.split("_")[1]
     
     help_text = ""
+    custom_buttons = None # Default buttons (Back only)
     
     if feature == "faktur":
+        # --- UPDATE REQUEST: CARA PAKAI DI ATAS, TOMBOL SETTING DI BAWAH ---
         help_text = (
-            "📄 **FITUR INVOICE OTOMATIS**\n\n"
-            "Membuat faktur PDF super cepat dengan template yang sudah diset.\n\n"
-            "⚙️ **Setup:** Ketik `.set_faktur`\n"
-            "🚀 **Pakai:** Ketik `.faktur` lalu isi data klien."
+            "📄 **PANDUAN INVOICE OTOMATIS**\n\n"
+            "**Cara Penggunaan:**\n"
+            "1️⃣ Ketik command `.faktur` di chat manapun (PC/Grup).\n"
+            "2️⃣ Bot akan meminta screenshot bukti transfer.\n"
+            "3️⃣ Ikuti langkah selanjutnya (Input Nama -> Email -> No HP).\n"
+            "4️⃣ PDF Faktur akan otomatis terkirim.\n\n"
+            "👇 **Klik tombol di bawah untuk mengatur template:**"
         )
+        custom_buttons = [
+            [Button.inline("⚙️ Setting Faktur (.set_faktur)", b"trigger_set_faktur")],
+            [Button.inline("⬅️ Kembali", b"menu_start")]
+        ]
+
     elif feature == "autoreply":
         help_text = (
             "🤖 **FITUR AUTO REPLY (MEDIA)**\n\n"
@@ -211,10 +230,13 @@ async def cb_feature_details(event):
     else:
         help_text = "⚠️ Info tidak ditemukan."
 
-    await event.edit(
-        help_text,
-        buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]]
-    )
+    # Gunakan custom buttons jika ada (untuk faktur), jika tidak gunakan default back
+    if custom_buttons:
+        buttons = custom_buttons
+    else:
+        buttons = [[Button.inline("⬅️ Kembali", b"menu_start")]]
+
+    await event.edit(help_text, buttons=buttons)
 
 @bot.on(events.CallbackQuery(pattern=b"menu_status"))
 async def cb_status(event):
