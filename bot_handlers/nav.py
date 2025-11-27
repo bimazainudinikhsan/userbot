@@ -93,6 +93,7 @@ async def handle_ar_input(event):
         elif event.sticker: media_type = "sticker"
         elif event.voice: media_type = "voice"
         elif event.video: media_type = "video"
+        elif event.document: media_type = "document"
         
         # Download media ke storage lokal bot manager
         status_msg = await event.reply("⏳ Mengunduh media...")
@@ -169,9 +170,11 @@ async def show_ar_list(event, content):
         buttons.append([Button.inline("⬅️ Kembali Menu Utama", b"ub_autoreply")])
 
     # Kirim/Edit pesan
-    if hasattr(event, 'edit'):
+    # PERBAIKAN: Cek tipe event agar tidak error saat NewMessage
+    if isinstance(event, events.CallbackQuery):
         await event.edit(msg, buttons=buttons)
     else:
+        # Jika dipanggil dari handle_ar_input (NewMessage), gunakan respond
         await event.respond(msg, buttons=buttons)
 
 @bot.on(events.CallbackQuery(pattern=b"view_ar_content"))
@@ -328,7 +331,6 @@ async def cb_feature_details(event):
             [Button.inline("📋 Edit Daftar & Isi", b"view_ar_content")],
             [Button.inline("⬅️ Kembali", b"menu_start")]
         ]
-    # ... (Fitur lain disederhanakan untuk ringkas, logika tetap sama) ...
     elif feature == "ping": help_text = "🏓 **CEK PING:** Ketik `.ping`"
     elif feature == "alive": help_text = "⚡ **STATUS:** Ketik `.alive`"
     elif feature == "spam": help_text = "🤖 **SPAM:** Ketik `.set_spambot` lalu `.spambot`"
