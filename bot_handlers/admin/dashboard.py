@@ -5,6 +5,22 @@ from state import GLOBAL_CONFIG
 # Import handler remote app agar tombolnya berfungsi
 import bot_handlers.remote_app 
 
+# ==========================================
+# HANDLER COMMAND /START KHUSUS ADMIN
+# ==========================================
+@bot.on(events.NewMessage(pattern="/start"))
+async def handler_admin_start(event):
+    # Cek apakah pengirim adalah Admin
+    if event.sender_id == ADMIN_ID:
+        await show_admin_dashboard(event)
+        # StopPropagation penting agar bot tidak lanjut memproses 
+        # handler /start lain (misalnya menu member biasa di nav.py)
+        raise events.StopPropagation
+
+# ==========================================
+# HANDLER UTAMA DASHBOARD
+# ==========================================
+
 @bot.on(events.NewMessage(pattern="/admin"))
 async def handler_admin(event):
     if event.sender_id != ADMIN_ID: return
@@ -51,7 +67,10 @@ async def show_admin_dashboard(event):
         [Button.inline("ℹ️ Bantuan", b"cmd_admin_help"), Button.inline("❌ Close", b"close_menu")]
     ]
     
-    if hasattr(event, 'edit'):
+    # PERBAIKAN: Cek tipe event agar tidak error "MessageIdInvalidError"
+    # NewMessage (teks dari user) -> Tidak bisa diedit -> Pakai respond()
+    # CallbackQuery (klik tombol) -> Bisa diedit -> Pakai edit()
+    if isinstance(event, events.CallbackQuery.Event):
         await event.edit(text, buttons=buttons)
     else:
         await event.respond(text, buttons=buttons)
