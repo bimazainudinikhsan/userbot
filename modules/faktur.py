@@ -16,7 +16,7 @@ from state import ACTIVE_USERBOTS
 SETTINGS_FILE = 'user_faktur_settings.json'
 BASE_STORAGE_DIR = 'penyimpanan_member'
 
-# Inisialisasi Multi-Core Processor (Max 4 Worker)
+# Inisialisasi Multi-Core Processor (Max 4 Worker ya)
 PROCESS_POOL = ProcessPoolExecutor(max_workers=4)
 
 FAKTUR_SESSION = {}      
