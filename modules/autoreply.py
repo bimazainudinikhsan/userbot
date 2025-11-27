@@ -8,16 +8,17 @@ from config import bot
 
 # File untuk menyimpan settingan per user
 SETTINGS_FILE = "user_autoreply_settings.json"
-STORAGE_DIR = "storage/autoreply_media"
+BASE_STORAGE_DIR = "storage/autoreply_media"
 
-if not os.path.exists(STORAGE_DIR):
-    os.makedirs(STORAGE_DIR)
+# Pastikan base folder ada
+if not os.path.exists(BASE_STORAGE_DIR):
+    os.makedirs(BASE_STORAGE_DIR)
 
 # Cache memory
 USER_SETTINGS = {}
 
 # ==========================================
-# 1. FUNGSI UTILITAS (LOAD/SAVE)
+# 1. FUNGSI UTILITAS (LOAD/SAVE & STORAGE)
 # ==========================================
 
 def load_settings():
@@ -51,6 +52,32 @@ def get_user_settings(user_id):
             "replied_chats": []
         }
     return USER_SETTINGS[user_id]
+
+# --- FUNGSI BARU UNTUK MANAJEMEN STORAGE PER USER ---
+
+def get_user_storage_path(user_id):
+    """Mendapatkan path folder khusus untuk user tertentu."""
+    user_path = os.path.join(BASE_STORAGE_DIR, str(user_id))
+    if not os.path.exists(user_path):
+        os.makedirs(user_path)
+    return user_path
+
+def get_storage_usage(user_id):
+    """Menghitung total penggunaan storage user dalam format string (MB/KB)."""
+    user_path = os.path.join(BASE_STORAGE_DIR, str(user_id))
+    total_size = 0
+    
+    if os.path.exists(user_path):
+        for dirpath, dirnames, filenames in os.walk(user_path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                total_size += os.path.getsize(fp)
+    
+    # Format ke KB atau MB
+    if total_size < 1024 * 1024:
+        return f"{total_size / 1024:.2f} KB"
+    else:
+        return f"{total_size / (1024 * 1024):.2f} MB"
 
 # Load saat module diimport
 load_settings()
@@ -90,7 +117,7 @@ async def check_and_reply(event, client):
                 await event.reply(item.get("text"))
             
             # Handling Media
-            elif tipe in ["sticker", "photo", "voice", "video", "document", "audio"]:
+            elif tipe in ["sticker", "photo", "voice", "video", "document", "audio", "media"]:
                 caption = item.get("text", "")
                 file_sent = False
 
@@ -128,7 +155,10 @@ async def check_and_reply(event, client):
     except Exception as e:
         print(f"[AutoReply] Failed: {e}")
 
-# Fungsi Helper untuk Bot Manager (Nav)
+# ==========================================
+# 3. FUNGSI HELPER UNTUK BOT MANAGER (CRUD)
+# ==========================================
+
 def add_autoreply_content(user_id, content_data):
     settings = get_user_settings(user_id)
     if not isinstance(settings["reply_content"], list):
@@ -139,6 +169,18 @@ def add_autoreply_content(user_id, content_data):
 def update_autoreply_content(user_id, index, content_data):
     settings = get_user_settings(user_id)
     if 0 <= index < len(settings["reply_content"]):
+        # Hapus file lama jika diganti media baru
+        old_item = settings["reply_content"][index]
+        old_path = old_item.get("file_path")
+        
+        # Jika ada path baru, dan beda dengan path lama, hapus yang lama
+        if old_path and os.path.exists(old_path):
+            new_path = content_data.get("file_path")
+            if new_path != old_path:
+                try:
+                    os.remove(old_path)
+                except: pass
+
         settings["reply_content"][index] = content_data
         save_settings()
         return True
@@ -146,8 +188,25 @@ def update_autoreply_content(user_id, index, content_data):
 
 def delete_autoreply_content(user_id, index):
     settings = get_user_settings(user_id)
-    if 0 <= index < len(settings["reply_content"]):
-        settings["reply_content"].pop(index)
+    content_list = settings.get("reply_content", [])
+    
+    if 0 <= index < len(content_list):
+        # 1. Ambil data item sebelum dihapus
+        item_to_remove = content_list[index]
+        
+        # 2. Cek apakah ada file media fisik yang tersimpan
+        file_path = item_to_remove.get("file_path")
+        
+        # 3. Hapus file dari penyimpanan server
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"[AutoReply] File media dihapus: {file_path}")
+            except Exception as e:
+                print(f"[AutoReply] Gagal menghapus file media: {e}")
+        
+        # 4. Hapus item dari list database
+        content_list.pop(index)
         save_settings()
         return True
     return False

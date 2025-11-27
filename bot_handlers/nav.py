@@ -8,14 +8,13 @@ from .admin import show_admin_dashboard
 from modules.autoreply import (
     get_user_settings, save_settings, 
     add_autoreply_content, delete_autoreply_content, update_autoreply_content,
-    STORAGE_DIR
+    get_user_storage_path, get_storage_usage
 )
 from modules.faktur import show_setting_menu
 from state import ACTIVE_USERBOTS
 
 # State untuk Input User (Tambah/Edit Auto Reply)
 AR_STATE = {} 
-# Format: {user_id: {"action": "add_text"|"add_media"|"edit", "index": int, "msg_id_to_edit": int}}
 
 # ==========================================
 # 1. MENU UTAMA & HELPER
@@ -54,7 +53,7 @@ async def handler_start(event):
 @bot.on(events.CallbackQuery(pattern=b"menu_start"))
 async def cb_back_main(event):
     user_id = event.sender_id
-    if user_id in AR_STATE: del AR_STATE[user_id] # Clear state jika kembali
+    if user_id in AR_STATE: del AR_STATE[user_id] 
     
     idx, row = find_member_row(user_id)
     is_member = row and row.get("Status") == "Approved"
@@ -95,9 +94,14 @@ async def handle_ar_input(event):
         elif event.video: media_type = "video"
         elif event.document: media_type = "document"
         
-        # Download media ke storage lokal bot manager
-        status_msg = await event.reply("⏳ Mengunduh media...")
-        path = await event.download_media(file=STORAGE_DIR)
+        # Download media ke FOLDER USER SPESIFIK
+        status_msg = await event.reply("⏳ Mengunduh media ke penyimpanan pribadi...")
+        
+        # Dapatkan path folder user
+        user_storage_path = get_user_storage_path(user_id)
+        
+        # Download file di sana
+        path = await event.download_media(file=user_storage_path)
         await status_msg.delete()
         
         new_content = {
@@ -138,14 +142,21 @@ async def handle_ar_input(event):
 
 async def show_ar_list(event, content):
     """Fungsi helper untuk menampilkan daftar dengan tombol Edit/Hapus."""
+    
+    # Hitung penggunaan storage user
+    user_id = event.sender_id if hasattr(event, "sender_id") else event.chat_id
+    usage_str = get_storage_usage(user_id)
+    
+    header = f"💾 **Penyimpanan Terpakai: {usage_str}**\n\n"
+    
     if not content:
-        msg = "📭 **Daftar Auto Reply Kosong**\nSilakan tambah baru."
+        msg = header + "📭 **Daftar Auto Reply Kosong**\nSilakan tambah baru."
         buttons = [
             [Button.inline("➕ Tambah Teks", b"add_ar_text"), Button.inline("➕ Tambah Media", b"add_ar_media")],
             [Button.inline("⬅️ Kembali", b"ub_autoreply")]
         ]
     else:
-        msg = "📋 **DAFTAR AUTO REPLY**\n\n"
+        msg = header + "📋 **DAFTAR AUTO REPLY**\n\n"
         buttons = []
         
         for i, item in enumerate(content):
@@ -170,11 +181,9 @@ async def show_ar_list(event, content):
         buttons.append([Button.inline("⬅️ Kembali Menu Utama", b"ub_autoreply")])
 
     # Kirim/Edit pesan
-    # PERBAIKAN: Cek tipe event agar tidak error saat NewMessage
     if isinstance(event, events.CallbackQuery):
         await event.edit(msg, buttons=buttons)
     else:
-        # Jika dipanggil dari handle_ar_input (NewMessage), gunakan respond
         await event.respond(msg, buttons=buttons)
 
 @bot.on(events.CallbackQuery(pattern=b"view_ar_content"))
@@ -320,10 +329,14 @@ async def cb_feature_details(event):
         status = "✅ ON" if settings.get("auto_reply") else "❌ OFF"
         count = len(settings.get("reply_content", []))
         
+        # Ambil usage
+        usage = get_storage_usage(user_id)
+        
         help_text = (
             f"🤖 **AUTO REPLY MANAGER**\n"
             f"Status: **{status}**\n"
-            f"Total Balasan: **{count} item**\n\n"
+            f"Total Balasan: **{count} item**\n"
+            f"Penyimpanan: **{usage}**\n\n"
             "Bot akan mengirimkan **SEMUA** daftar balasan secara berurutan kepada pengirim pesan pribadi."
         )
         custom_buttons = [
