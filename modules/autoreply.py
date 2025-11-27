@@ -1,168 +1,274 @@
-# bmcodexbot/modules/autoreply.py
+# modules/autoreply.py
+import json
 import os
-import logging
-from telethon import events, utils
-from modules.faktur import FAKTUR_SESSION 
-from state import LIVE_CHAT_SESSIONS # FIX: Import dari state.py untuk hindari circular import
+import random
+import time
+from telethon import events
+from config import bot
 
-# Struktur Data:
-# user_id -> {
-#    "auto_reply": bool,
-#    "reply_content": str,
-#    "media_path": str (path file jika ada media),
-#    "replied_chats": set()
-# }
+# File untuk menyimpan settingan per user
+SETTINGS_FILE = "user_autoreply_settings.json"
+
+# Cache memory untuk performa (biar gak baca file terus)
+# Struktur: { "user_id": { "auto_reply": True, "reply_content": [...], "replied_chats": [] } }
 USER_SETTINGS = {}
 
-# KONFIGURASI BATAS UKURAN FILE (Dalam Bytes)
-# 10 MB = 10 * 1024 * 1024
-MAX_FILE_SIZE = 10 * 1024 * 1024 
+# ==========================================
+# 1. FUNGSI UTILITAS (LOAD/SAVE)
+# ==========================================
 
-# Pastikan folder storage ada
-if not os.path.exists('storage'):
-    os.makedirs('storage', exist_ok=True)
+def load_settings():
+    """Memuat settingan dari file JSON."""
+    global USER_SETTINGS
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                # Konversi key string ke string (json force keys to string)
+                USER_SETTINGS = data
+        except Exception as e:
+            print(f"[AutoReply] Error loading settings: {e}")
+            USER_SETTINGS = {}
+    else:
+        USER_SETTINGS = {}
+
+def save_settings():
+    """Menyimpan settingan ke file JSON."""
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(USER_SETTINGS, f, indent=2)
+    except Exception as e:
+        print(f"[AutoReply] Error saving settings: {e}")
 
 def get_user_settings(user_id):
+    """Mengambil settingan user, buat default jika belum ada."""
+    user_id = str(user_id)
     if user_id not in USER_SETTINGS:
         USER_SETTINGS[user_id] = {
             "auto_reply": False,
-            "reply_content": "🤖 Halo, saat ini saya sedang sibuk. Silakan tinggalkan pesan.",
-            "media_path": None,
-            "replied_chats": set()
+            "reply_content": [],  # List of dicts
+            "replied_chats": []   # List of chat_ids yang sudah dibalas
         }
+    
+    # Migrasi format lama (string) ke format baru (list) jika perlu
+    current_content = USER_SETTINGS[user_id].get("reply_content")
+    if isinstance(current_content, str):
+        USER_SETTINGS[user_id]["reply_content"] = [{
+            "type": "text", 
+            "text": current_content
+        }]
+        save_settings()
+        
     return USER_SETTINGS[user_id]
 
-async def register(client, user_id, is_allowed, check_status, help_dict):
-    # Update Help Dictionary
-    help_dict[".autoreply"] = {
-        "title": "Auto Reply 🤖",
-        "usage": "Nyalakan/Matikan auto reply."
-    }
-    help_dict[".set_autoreply"] = {
-        "title": "Set Pesan Reply 📝",
-        "usage": "Balas pesan (teks/media) dengan command ini untuk mengatur template."
-    }
+# Load saat module diimport
+load_settings()
 
-    # --- 1. TOGGLE ON/OFF ---
-    @client.on(events.NewMessage(pattern=r"(?i)^\.autoreply$"))
-    async def enable_reply(event):
-        me = await client.get_me()
-        if event.sender_id != me.id: return
-        
-        if not is_allowed("autoreply"): 
-            return await event.edit("🔒 Fitur dikunci.")
-        
-        settings = get_user_settings(user_id)
+# ==========================================
+# 2. HANDLER COMMAND (.set_autoreply, dll)
+# ==========================================
+
+async def handle_autoreply_command(event, client):
+    """
+    Menangani command terkait auto reply dari Userbot.
+    Dijalankan dari main.py atau handlers.py
+    """
+    message = event.message
+    text = message.text
+    user_id = str(client.uid) # ID pemilik userbot
+    
+    settings = get_user_settings(user_id)
+
+    # --- 1. TOGGLE ON/OFF (.autoreply) ---
+    if text.strip() == ".autoreply":
         settings["auto_reply"] = not settings["auto_reply"]
+        status = "✅ ON" if settings["auto_reply"] else "❌ OFF"
         
-        # Reset replied chats saat ditoggle agar bisa reply lagi ke orang yg sama
+        # Reset list chat yang sudah dibalas saat dihidupkan
         if settings["auto_reply"]:
-            settings["replied_chats"] = set()
+            settings["replied_chats"] = []
             
-        status = "ON ✅" if settings["auto_reply"] else "OFF ❌"
-        await event.edit(f"🤖 **Auto Reply {status}**")
+        save_settings()
+        await message.edit(f"🤖 **Auto Reply:** {status}")
+        return
 
-    # --- 2. SET AUTOREPLY (BARU) ---
-    @client.on(events.NewMessage(pattern=r"(?i)^\.set_autoreply(?: |$)(.*)"))
-    async def set_autoreply_handler(event):
-        me = await client.get_me()
-        if event.sender_id != me.id: return
-        if not is_allowed("autoreply"): return await event.edit("🔒 Fitur dikunci.")
+    # --- 2. SET KONTEN (.set_autoreply) ---
+    elif text.startswith(".set_autoreply"):
+        reply_msg = await message.get_reply_message()
+        args = text.split(" ", 1)
+        input_text = args[1] if len(args) > 1 else ""
 
-        reply_msg = await event.get_reply_message()
-        input_text = event.pattern_match.group(1).strip()
-        settings = get_user_settings(user_id)
-        
-        await event.edit("🔄 Memproses pengaturan baru...")
+        new_entry = None
 
-        try:
-            # KASUS A: User me-reply sebuah pesan (Bisa Media / Teks)
-            if reply_msg:
-                # 1. Jika pesan yang direply ada medianya (Gambar/Stiker/Dokumen/Voice)
-                if reply_msg.media:
-                    # --- VALIDASI UKURAN FILE ---
-                    file_size = 0
-                    if hasattr(reply_msg, 'document') and reply_msg.document:
-                        file_size = reply_msg.document.size
-                    elif hasattr(reply_msg, 'photo') and reply_msg.photo:
-                        file_size = 0 
-                    
-                    if file_size > MAX_FILE_SIZE:
-                        return await event.edit(f"⚠️ **Gagal:** Ukuran file terlalu besar!\nMaksimal: 10MB.\nFile Anda: {file_size / (1024*1024):.2f} MB")
+        # A. Jika mereply pesan (Media/Sticker/Text lain)
+        if reply_msg:
+            if reply_msg.media:
+                media_type = "media"
+                if reply_msg.sticker: media_type = "sticker"
+                elif reply_msg.photo: media_type = "photo"
+                elif reply_msg.voice: media_type = "voice"
+                elif reply_msg.video: media_type = "video"
+                elif reply_msg.document: media_type = "document"
 
-                    # Hapus media lama jika ada
-                    if settings["media_path"] and os.path.exists(settings["media_path"]):
-                        try: os.remove(settings["media_path"])
-                        except: pass
-                    
-                    # Download media baru
-                    ext = utils.get_extension(reply_msg.media) or ".jpg"
-                    file_path = f"storage/autoreply_{user_id}{ext}"
-                    
-                    await event.edit("⬇️ Mengunduh media...")
-                    path = await reply_msg.download_media(file=file_path)
-                    settings["media_path"] = path
-                    
-                    # Caption
-                    if input_text:
-                        settings["reply_content"] = input_text
-                    else:
-                        settings["reply_content"] = reply_msg.text or "" 
-                    
-                    await event.edit("✅ **Auto Reply Diupdate!**\nMedia: Terpasang\nCaption: Tersimpan.")
-                
-                # 2. Jika pesan yang direply hanya teks biasa
-                else:
-                    settings["media_path"] = None # Hapus media
-                    settings["reply_content"] = input_text or reply_msg.text
-                    await event.edit(f"✅ **Auto Reply Diupdate!**\nMode: Teks Saja\nPesan: `{settings['reply_content']}`")
-
-            # KASUS B: Tidak me-reply pesan, cuma ketik .set_autoreply <pesan>
-            elif input_text:
-                settings["media_path"] = None
-                settings["reply_content"] = input_text
-                await event.edit(f"✅ **Auto Reply Diupdate!**\nMode: Teks Saja\nPesan: `{input_text}`")
-            
+                new_entry = {
+                    "type": media_type,
+                    "text": input_text, # Caption opsional
+                    "media_chat_id": reply_msg.chat_id,
+                    "media_msg_id": reply_msg.id
+                }
             else:
-                await event.edit("⚠️ **Cara Pakai:**\n\n1. Reply pesan (gambar/teks) dengan `.set_autoreply`\n2. Atau ketik `.set_autoreply <pesan baru>`")
-
-        except Exception as e:
-            logging.error(f"Set Autoreply Error: {e}")
-            await event.edit(f"❌ Gagal menyimpan: {e}")
-
-
-    # --- 3. LISTENER (PENGIRIM PESAN) ---
-    @client.on(events.NewMessage(incoming=True)) 
-    async def auto_reply_listener(event):
-        me = await client.get_me()
-        if event.sender_id == me.id: return 
-        if not event.is_private: return 
+                # Reply text orang lain
+                new_entry = {
+                    "type": "text",
+                    "text": reply_msg.text or input_text
+                }
         
-        # 1. Cek Sesi Faktur
-        if event.chat_id in FAKTUR_SESSION: return 
+        # B. Jika input text langsung (.set_autoreply Halo)
+        elif input_text:
+            new_entry = {
+                "type": "text",
+                "text": input_text
+            }
         
-        # 2. Cek Sesi Live Chat (Jika di masa depan perlu integrasi)
-        # Karena kita sudah pindahkan LIVE_CHAT_SESSIONS ke state.py, kita bisa akses dengan aman.
-        # Namun logika userbot (akun member) vs bot manager (akun admin) berbeda.
-        # Userbot membalas pesan di akun member. Livechat terjadi di bot manager.
-        # Jadi ini tidak konflik. Biarkan saja.
-        
-        settings = get_user_settings(user_id)
-        if not settings["auto_reply"]: return
-        
-        if event.chat_id in settings["replied_chats"]: return
+        else:
+            await message.edit("❌ **Format salah.**\nKetik `.set_autoreply <pesan>` atau reply media/sticker.")
+            return
 
-        try:
-            if settings["media_path"] and os.path.exists(settings["media_path"]):
-                await event.reply(
-                    file=settings["media_path"], 
-                    message=settings["reply_content"]
-                )
-            elif settings["reply_content"]:
-                await event.reply(settings["reply_content"])
+        # Simpan ke list
+        if new_entry:
+            if not isinstance(settings["reply_content"], list):
+                settings["reply_content"] = []
             
-            settings["replied_chats"].add(event.chat_id)
-            logging.info(f"AutoReply sent to {event.chat_id}")
+            settings["reply_content"].append(new_entry)
+            save_settings()
             
-        except Exception as e:
-            logging.error(f"AutoReply Error: {e}")
+            count = len(settings["reply_content"])
+            await message.edit(
+                f"✅ **Balasan ditambahkan ke urutan {count}!**\n"
+                f"Sekarang bot akan mengirim {count} pesan secara berurutan.\n"
+                f"Ketik `.view_autoreply` untuk melihat/menghapus."
+            )
+
+    # --- 3. LIHAT DAFTAR (.view_autoreply) ---
+    elif text == ".view_autoreply":
+        content = settings.get("reply_content", [])
+        if not content:
+            await message.edit("❌ Belum ada balasan auto reply tersimpan.\n\nGunakan `.set_autoreply <pesan>` untuk menambah.")
+            return
+            
+        msg = "📋 **DAFTAR AUTO REPLY (Dikirim Berurutan)**\n"
+        msg += "-------------------------------------------\n"
+        for i, item in enumerate(content, 1):
+            tipe = item.get("type", "text").upper()
+            txt = item.get("text", "")
+            
+            # Preview text pendek
+            if len(txt) > 30: txt = txt[:30] + "..."
+            if not txt and tipe != "TEXT": txt = "(Tanpa Caption)"
+            
+            msg += f"**{i}. [{tipe}]** {txt}\n"
+            
+        msg += "-------------------------------------------\n"
+        msg += "🗑 **Hapus:** `.del_autoreply <nomor>`\n"
+        msg += "➕ **Tambah:** `.set_autoreply <pesan>` atau Reply Media"
+        
+        await message.edit(msg)
+
+    # --- 4. HAPUS ITEM TERTENTU (.del_autoreply) ---
+    elif text.startswith(".del_autoreply"):
+        args = text.split(" ")
+        if len(args) < 2 or not args[1].isdigit():
+            await message.edit("❌ **Format salah.**\nGunakan `.del_autoreply <nomor>` (lihat di .view_autoreply)")
+            return
+            
+        index = int(args[1]) - 1
+        content = settings.get("reply_content", [])
+        
+        if 0 <= index < len(content):
+            removed = content.pop(index)
+            save_settings()
+            tipe = removed.get("type", "text")
+            await message.edit(f"✅ **Berhasil menghapus balasan no {index + 1} ({tipe})**")
+        else:
+            await message.edit("❌ Nomor tidak ditemukan.")
+
+    # --- 5. HAPUS SEMUA (.clear_autoreply) ---
+    elif text == ".clear_autoreply":
+        settings["reply_content"] = []
+        save_settings()
+        await message.edit("🗑 **Semua balasan auto reply telah dihapus.**")
+
+# ==========================================
+# 3. LOGIKA UTAMA AUTO REPLY (LISTENER)
+# ==========================================
+
+async def check_and_reply(event, client):
+    """
+    Dipanggil setiap ada pesan masuk (Incoming Private Message).
+    """
+    if event.is_group or event.is_channel or event.out:
+        return # Hanya untuk PM masuk
+
+    user_id = str(client.uid)
+    sender_id = event.sender_id
+    
+    # Jangan reply ke diri sendiri atau bot admin/service
+    if sender_id == client.uid: return
+    
+    settings = get_user_settings(user_id)
+    
+    # 1. Cek apakah fitur ON
+    if not settings.get("auto_reply"):
+        return
+
+    # 2. Cek apakah sudah pernah dibalas (Reply Once per session)
+    replied_list = settings.get("replied_chats", [])
+    if sender_id in replied_list:
+        return 
+
+    # 3. Ambil konten
+    contents = settings.get("reply_content", [])
+    if not contents: return
+
+    # 4. KIRIM SEMUA PESAN DALAM DAFTAR (Berurutan)
+    try:
+        # Simulasi mengetik awal
+        async with client.action(event.chat_id, 'typing'):
+            await time.sleep(random.uniform(1.0, 2.0))
+
+        # Loop semua konten yang di-set
+        for item in contents:
+            tipe = item.get("type", "text")
+            
+            if tipe == "text":
+                await event.reply(item.get("text"))
+            
+            elif tipe in ["sticker", "photo", "voice", "video", "media", "document"]:
+                source_chat = item.get("media_chat_id")
+                source_msg_id = item.get("media_msg_id")
+                caption = item.get("text", "")
+                
+                sent = False
+                if source_chat and source_msg_id:
+                    try:
+                        # Ambil pesan asli untuk mendapatkan medianya
+                        msg = await client.get_messages(source_chat, ids=source_msg_id)
+                        if msg and msg.media:
+                            await event.reply(caption, file=msg.media)
+                            sent = True
+                    except Exception as e:
+                        print(f"[AutoReply] Media fetch error: {e}")
+                
+                # Jika gagal ambil media, kirim caption saja (jika ada)
+                if not sent and caption:
+                    await event.reply(f"{caption}\n_(Media tidak tersedia)_")
+            
+            # Beri jeda sedikit antar pesan agar tidak terdeteksi spam/flood
+            await time.sleep(0.8)
+
+        # 5. Tandai sudah dibalas
+        replied_list.append(sender_id)
+        settings["replied_chats"] = replied_list
+        
+    except Exception as e:
+        print(f"[AutoReply] Failed to reply sequence: {e}")

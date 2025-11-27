@@ -158,16 +158,73 @@ async def cb_trigger_set_faktur(event):
     # Ini akan mengedit pesan saat ini menjadi menu setting faktur
     await show_setting_menu(event, user_id)
 
+# Handler khusus untuk Toggle Auto Reply dari Menu Detail
+@bot.on(events.CallbackQuery(pattern=b"toggle_ar_details"))
+async def cb_toggle_ar_details(event):
+    user_id = event.sender_id
+    settings = get_user_settings(user_id)
+    
+    # Toggle logic
+    settings["auto_reply"] = not settings.get("auto_reply", False)
+    if settings["auto_reply"]: 
+        settings["replied_chats"] = set()
+        await event.answer("✅ Auto Reply Diaktifkan!")
+    else:
+        await event.answer("❌ Auto Reply Dimatikan!")
+        
+    # Refresh menu auto reply (panggil ulang logic display)
+    event.data = b"ub_autoreply"
+    await cb_feature_details(event)
+
+# Handler khusus untuk Melihat Konten Auto Reply
+@bot.on(events.CallbackQuery(pattern=b"view_ar_content"))
+async def cb_view_ar_content(event):
+    user_id = event.sender_id
+    settings = get_user_settings(user_id)
+    content = settings.get("reply_content")
+    
+    msg = "📋 **DAFTAR AUTO REPLY (Dikirim Berurutan)**\n"
+    msg += "-------------------------------------------\n"
+    
+    if not content:
+        msg += "❌ **Belum ada balasan yang diatur.**\n\n"
+    elif isinstance(content, list):
+        for i, item in enumerate(content, 1):
+            if isinstance(item, dict):
+                tipe = item.get("type", "text").upper()
+                isi = item.get("text", "")
+                
+                # Preview text pendek
+                if len(isi) > 30: isi = isi[:30] + "..."
+                if not isi and tipe != "TEXT": isi = "(Tanpa Caption)"
+                
+                if tipe == "TEXT":
+                    msg += f"**{i}. 💬 [{tipe}]** {isi}\n"
+                else:
+                    msg += f"**{i}. 🖼 [{tipe}]** {isi}\n"
+            else:
+                msg += f"{i}. {str(item)}\n"
+    else:
+        msg += f"1. 💬 {content}"
+        
+    msg += "-------------------------------------------\n"
+    msg += "**Panduan Edit:**\n"
+    msg += "🗑 **Hapus:** Ketik `.del_autoreply <nomor>`\n"
+    msg += "➕ **Tambah:** Ketik `.set_autoreply <pesan>`"
+    
+    buttons = [[Button.inline("⬅️ Kembali", b"ub_autoreply")]]
+    await event.edit(msg, buttons=buttons)
+
 @bot.on(events.CallbackQuery(pattern=r"ub_(.+)"))
 async def cb_feature_details(event):
     data = event.data.decode()
     feature = data.split("_")[1]
+    user_id = event.sender_id
     
     help_text = ""
     custom_buttons = None # Default buttons (Back only)
     
     if feature == "faktur":
-        # --- UPDATE REQUEST: CARA PAKAI DI ATAS, TOMBOL SETTING DI BAWAH ---
         help_text = (
             "📄 **PANDUAN INVOICE OTOMATIS**\n\n"
             "**Cara Penggunaan:**\n"
@@ -183,14 +240,33 @@ async def cb_feature_details(event):
         ]
 
     elif feature == "autoreply":
+        # Ambil settingan real-time
+        settings = get_user_settings(user_id)
+        is_active = settings.get("auto_reply", False)
+        
+        status_text = "✅ ON" if is_active else "❌ OFF"
+        
         help_text = (
-            "🤖 **FITUR AUTO REPLY (MEDIA)**\n\n"
-            "Bot membalas pesan masuk (PC) otomatis saat Anda sibuk.\n\n"
-            "**1. On/Off:** Ketik `.autoreply`\n"
-            "**2. Setup:**\n"
-            "• Teks: `.set_autoreply Pesan..`\n"
-            "• Media: Reply gambar/file -> `.set_autoreply <caption opsional>`"
+            f"🤖 **FITUR AUTO REPLY**\n"
+            f"Status Saat Ini: **{status_text}**\n\n"
+            "Bot akan membalas pesan pribadi (PM) secara otomatis saat Anda sibuk.\n\n"
+            "**Cara Kerja:**\n"
+            "Bot akan mengirim **SEMUA** pesan yang Anda simpan secara berurutan.\n"
+            "(Contoh: Kirim Teks salam -> Kirim Gambar Brosur -> Kirim Teks harga)\n\n"
+            "**Panduan Setup:**\n"
+            "1️⃣ **Tambah Balasan Teks:**\n"
+            "   Ketik `.set_autoreply <pesan anda>`\n"
+            "2️⃣ **Tambah Balasan Media:**\n"
+            "   Reply foto/sticker -> ketik `.set_autoreply`\n"
+            "3️⃣ **Hapus Balasan:**\n"
+            "   Ketik `.del_autoreply <nomor>` (Lihat nomor di tombol 'Lihat Daftar')\n"
         )
+        custom_buttons = [
+            [Button.inline(f"Saklar: {status_text}", b"toggle_ar_details")],
+            [Button.inline("👀 Lihat Daftar Balasan", b"view_ar_content")],
+            [Button.inline("⬅️ Kembali", b"menu_start")]
+        ]
+
     elif feature == "ping":
         help_text = (
             "🏓 **CEK PING**\n\n"
@@ -230,7 +306,7 @@ async def cb_feature_details(event):
     else:
         help_text = "⚠️ Info tidak ditemukan."
 
-    # Gunakan custom buttons jika ada (untuk faktur), jika tidak gunakan default back
+    # Gunakan custom buttons jika ada (untuk faktur & autoreply), jika tidak gunakan default back
     if custom_buttons:
         buttons = custom_buttons
     else:
