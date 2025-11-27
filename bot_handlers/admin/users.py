@@ -79,7 +79,10 @@ async def cb_admin_status_list(event):
     header_text = f"📊 **DAFTAR MEMBER**\nTotal: {len(all_records)} | ⚡ Online: {online_count}\n"
     if query: header_text += f"🔎 Hasil: `{query}` ({len(filtered_records)})\n"
     
-    await event.edit(header_text, buttons=buttons)
+    if hasattr(event, 'edit'):
+        await event.edit(header_text, buttons=buttons)
+    else:
+        await event.respond(header_text, buttons=buttons)
 
 # --- Search Logic ---
 @bot.on(events.CallbackQuery(pattern=b"ADM_SEARCH_MODE"))
@@ -97,6 +100,7 @@ async def cb_admin_reset_search(event):
 
 # --- Detail User & Edit ---
 async def render_user_detail(event, user_id):
+    """Menampilkan detail user. Fungsi ini diekspor agar bisa dipanggil dari module lain."""
     idx, row = find_member_row(user_id)
     if not row: return await event.edit("❌ Member tidak ditemukan.", buttons=[[Button.inline("🔙 Kembali", b"cmd_admin_status")]])
 
@@ -128,12 +132,12 @@ async def cb_admin_user_detail(event):
     user_id = event.data.decode().split(":")[1]
     await render_user_detail(event, user_id)
 
-@bot.on(events.CallbackQuery(pattern=r"ADM_MORE:(.+)"))
-async def cb_admin_more_actions(event):
-    if event.sender_id != ADMIN_ID: return
-    user_id = event.data.decode().split(":")[1]
+# --- FUNGSI BARU: RENDER MORE ACTIONS (Agar bisa di-import) ---
+async def render_more_actions(event, user_id):
+    """Menampilkan menu tindakan lanjutan. Diekspor untuk subscription.py."""
     idx, row = find_member_row(user_id)
-    
+    if not row: return await event.answer("Member tidak ditemukan.", alert=True)
+
     suspend_btn = "⛔ Suspend Member" if row.get("Status") == "Approved" else "✅ Unsuspend"
     suspend_data = "SUSPEND" if row.get("Status") == "Approved" else "UNSUSPEND"
 
@@ -144,7 +148,17 @@ async def cb_admin_more_actions(event):
         [Button.inline("🗑️ HAPUS PERMANEN", f"ADM_DEL:{user_id}")],
         [Button.inline("🔙 Kembali", f"ADM_USR:{user_id}")]
     ]
-    await event.edit(text, buttons=buttons)
+    
+    if hasattr(event, 'edit'):
+        await event.edit(text, buttons=buttons)
+    else:
+        await event.respond(text, buttons=buttons)
+
+@bot.on(events.CallbackQuery(pattern=r"ADM_MORE:(.+)"))
+async def cb_admin_more_actions(event):
+    if event.sender_id != ADMIN_ID: return
+    user_id = event.data.decode().split(":")[1]
+    await render_more_actions(event, user_id)
 
 # --- Delete Logic ---
 @bot.on(events.CallbackQuery(pattern=r"ADM_DEL:(.+)"))
