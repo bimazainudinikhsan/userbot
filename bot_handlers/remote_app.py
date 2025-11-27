@@ -1,4 +1,4 @@
-from telethon import events, Button
+from telethon import events, Button, errors
 from config import bot, ADMIN_ID
 from firebase_manager import (
     get_all_apps, get_app_config, get_app_devices, 
@@ -18,8 +18,10 @@ async def cb_remote_dashboard(event):
     apps = get_all_apps()
     
     if not apps:
-        return await event.edit("⚠️ **Tidak ada aplikasi ditemukan di database.**", 
-                                buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
+        try:
+            return await event.edit("⚠️ **Tidak ada aplikasi ditemukan di database.**", 
+                                    buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
+        except errors.MessageNotModifiedError: return
 
     msg = "📱 **REMOTE APLIKASI CONTROL**\n\nSilakan pilih aplikasi yang ingin dikelola:"
     buttons = []
@@ -34,7 +36,11 @@ async def cb_remote_dashboard(event):
     if row: buttons.append(row)
     
     buttons.append([Button.inline("⬅️ Kembali Dashboard", b"menu_admin_dashboard")])
-    await event.edit(msg, buttons=buttons)
+    
+    try:
+        await event.edit(msg, buttons=buttons)
+    except errors.MessageNotModifiedError:
+        pass # Abaikan jika pesan tidak berubah (misal double click)
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_view_(.+)"))
 async def cb_remote_view_app(event):
@@ -63,7 +69,9 @@ async def cb_remote_view_app(event):
         [Button.inline(f"📱 Lihat Device ({total_dev})", data=f"rapp_devlist_{app_name}")],
         [Button.inline("⬅️ Kembali", b"menu_remote_app")]
     ]
-    await event.edit(msg, buttons=buttons)
+    try:
+        await event.edit(msg, buttons=buttons)
+    except errors.MessageNotModifiedError: pass
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_devlist_(.+)"))
 async def cb_remote_device_list(event):
@@ -80,25 +88,43 @@ async def cb_remote_device_list(event):
     for dev_id, info in devices.items():
         dev_name = info.get('nama_perangkat', 'Unknown')
         batt = info.get('persen_baterai', '?')
-        # Potong ID biar tombol gak kepanjangan
-        short_id = dev_id.replace("android_", "")[:6]
         
         btn_text = f"{dev_name} ({batt}%)"
         buttons.append([Button.inline(btn_text, data=f"rapp_act_{app_name}_{dev_id}")])
         
     buttons.append([Button.inline("⬅️ Kembali", data=f"rapp_view_{app_name}")])
-    await event.edit(msg, buttons=buttons)
+    try:
+        await event.edit(msg, buttons=buttons)
+    except errors.MessageNotModifiedError: pass
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_act_(.+)"))
 async def cb_remote_device_action_menu(event):
     """Menu Aksi untuk Satu Device"""
-    data = event.data.decode().split("_")
-    app_name = data[2]
-    # Gabungkan sisa split jika ID mengandung underscore, atau ambil index ke-3
-    # Format ID di DB: android_xxxx. Karena split by '_', kita harus hati-hati.
-    # Cara aman: ambil substring setelah rapp_act_{app_name}_
-    prefix = f"rapp_act_{app_name}_"
-    dev_id = event.data.decode()[len(prefix):]
+    prefix = f"rapp_act_"
+    # Decode full string
+    full_data = event.data.decode()
+    # Format: rapp_act_{appname}_{devid}
+    # Kita harus parsing manual karena appname atau devid mungkin mengandung underscore
+    
+    # Ambil sisa string setelah prefix
+    data_content = full_data[len(prefix):]
+    
+    # Cari aplikasi yang cocok dari list apps (agar parsing akurat)
+    apps = get_all_apps()
+    app_name = None
+    dev_id = None
+    
+    for app in apps:
+        if data_content.startswith(app + "_"):
+            app_name = app
+            dev_id = data_content[len(app)+1:]
+            break
+            
+    if not app_name:
+        # Fallback split biasa (mungkin gagal jika nama aneh)
+        parts = data_content.split("_")
+        app_name = parts[0]
+        dev_id = "_".join(parts[1:])
     
     devices = get_app_devices(app_name)
     dev_info = devices.get(dev_id, {})
@@ -120,27 +146,30 @@ async def cb_remote_device_action_menu(event):
         [Button.inline("🔒 Kunci Kembali (Start)", data=f"rapp_do_{app_name}_{dev_id}_mulai")],
         [Button.inline("⬅️ Kembali List", data=f"rapp_devlist_{app_name}")]
     ]
-    await event.edit(msg, buttons=buttons)
+    try:
+        await event.edit(msg, buttons=buttons)
+    except errors.MessageNotModifiedError: pass
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_do_(.+)"))
 async def cb_remote_exec_action(event):
     """Eksekusi Perintah Remote"""
-    # Format: rapp_do_{app_name}_{dev_id}_{action}
-    parts = event.data.decode().split("_")
-    action = parts[-1]
-    
-    # Reconstruct app_name & dev_id is tricky with splits. 
-    # Logic: rapp_do_ (8 chars) ... _{action}
     full_str = event.data.decode()
-    base_data = full_str[8:-(len(action)+1)] # remove prefix & suffix action
+    # Format: rapp_do_{app}_{dev}_{action}
+    # Action selalu di akhir (buka/mulai)
     
-    # base_data is like "hot51_android_12345"
-    # Kita perlu tahu app_name. Untungnya kita punya list app_name dari firebase
-    # Tapi demi efisiensi, kita asumsikan app_name tidak ada underscore atau kita split manual
-    # Cara paling aman: parsing manual
+    if full_str.endswith("_buka"):
+        action = "buka"
+        db_value = "sukses" # Value DB untuk unlock
+    elif full_str.endswith("_mulai"):
+        action = "mulai"
+        db_value = "mulai" # Value DB untuk lock
+    else:
+        return await event.answer("❌ Aksi tidak valid.", alert=True)
+        
+    # Parsing App & Dev ID (menghapus prefix 'rapp_do_' dan suffix '_{action}')
+    base_data = full_str[8:-(len(action)+1)]
     
-    # Mencari split pertama untuk app_name
-    apps = get_all_apps() # Ambil list app valid untuk matching
+    apps = get_all_apps()
     target_app = None
     target_dev = None
     
@@ -153,17 +182,41 @@ async def cb_remote_exec_action(event):
     if not target_app:
         return await event.answer("❌ Error parsing data.", alert=True)
         
-    # Mapping action ke value database
-    db_value = "sukses" if action == "buka" else "mulai"
-    
     if remote_device_action(target_app, target_dev, db_value):
-        await event.answer(f"✅ Perintah '{action}' dikirim!", alert=True)
-        # Refresh menu
-        await cb_remote_device_action_menu(event)
-        # Hacky re-trigger event with correct data structure
-        event.data = f"rapp_act_{target_app}_{target_dev}".encode()
+        await event.answer(f"✅ Perintah '{action.upper()}' dikirim!", alert=True)
+        # Refresh menu (re-trigger action menu logic)
+        # Kita manipulasi event data agar handler rapp_act_ menangkapnya seolah-olah tombol back ditekan
+        # Tapi karena ini callback, kita edit manual saja
+        
+        # Panggil ulang logic render menu aksi
+        # Buat event dummy atau copy logic (lebih aman copy logic render dikit)
+        # Atau redirect user klik tombol back
+        
+        # Cara terbaik: Edit pesan saat ini dengan status baru
+        devices = get_app_devices(target_app)
+        dev_info = devices.get(target_dev, {})
+        # Update status lokal biar realtime di UI
+        dev_info['status_keluar_mode_kios'] = db_value 
+        
+        msg = (
+            f"🎮 **REMOTE DEVICE CONTROL**\n"
+            f"ID: `{target_dev}`\n"
+            f"Nama: **{dev_info.get('nama_perangkat')}**\n"
+            f"Baterai: {dev_info.get('persen_baterai')}%\n"
+            f"Status: `{db_value}` (UPDATED)\n"
+            f"Online: {dev_info.get('waktu_start')}\n"
+        )
+        buttons = [
+            [Button.inline("🔓 Buka Paksa (Unlock)", data=f"rapp_do_{target_app}_{target_dev}_buka")],
+            [Button.inline("🔒 Kunci Kembali (Start)", data=f"rapp_do_{target_app}_{target_dev}_mulai")],
+            [Button.inline("⬅️ Kembali List", data=f"rapp_devlist_{target_app}")]
+        ]
+        try:
+            await event.edit(msg, buttons=buttons)
+        except errors.MessageNotModifiedError: pass
+        
     else:
-        await event.answer("❌ Gagal mengirim perintah.", alert=True)
+        await event.answer("❌ Gagal mengirim perintah ke Database.", alert=True)
 
 @bot.on(events.CallbackQuery(pattern=r"rapp_editpin_(.+)"))
 async def cb_remote_edit_pin(event):
@@ -200,9 +253,7 @@ async def handle_remote_input(event):
             
         del REMOTE_STATE[user_id]
         
-        # Kembali ke menu view (Trigger ulang)
-        # Karena NewMessage tidak bisa edit pesan bot sebelumnya dengan mudah tanpa ID,
-        # Kita kirim pesan baru berisi menu
+        # Kembali ke menu view
         config = get_app_config(app_name)
         devices = get_app_devices(app_name)
         total_dev = len(devices) if devices else 0
