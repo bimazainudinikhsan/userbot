@@ -19,9 +19,13 @@ from state import ACTIVE_USERBOTS, GLOBAL_CONFIG
 from aktif_fitur import start_userbot
 
 # Import handlers & Menu Helper
-import bot_handlers
-from bot_handlers.nav import get_main_menu_data
-from bot_handlers.admin import show_admin_dashboard
+import bot_handlers.admin
+import bot_handlers.nav
+import bot_handlers.auth
+import bot_handlers.payment
+import bot_handlers.messages
+import bot_handlers.livechat
+import bot_handlers.remote_app
 
 # Import Spambot untuk Resume
 from modules import spambot 
