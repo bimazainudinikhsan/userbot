@@ -565,23 +565,32 @@ async def admin_reject_reason(event):
 async def cb_admin_help(event):
     await event.edit("Gunakan tombol menu untuk navigasi.", buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]])
 
-@bot.on(events.CallbackQuery(pattern=b"cmd_admin_restart"))
-async def cb_restart(event):
-    if event.sender_id != ADMIN_ID: return
-    
-    # 1. Notifikasi ke Admin bahwa proses dimulai
-    await event.answer("🔄 Memulai proses restart...", alert=True)
-    msg = await event.edit("🔄 **SYSTEM RESTART INITIATED**\n\nSedang mengirim notifikasi ke seluruh member...")
-    
-    members = get_all_members_safe()
+# --- FUNGSI INTI: RESTART PROCESS ---
+# Fungsi ini bisa dipanggil oleh Tombol atau Auto Update
+async def execute_restart_sequence(trigger_event=None):
+    # 1. Tentukan target Admin & Pesan Awal
+    # Jika dipanggil lewat tombol, edit pesan. Jika otomatis, kirim pesan baru ke Admin.
+    target_chat_id = ADMIN_ID # Pastikan variabel ADMIN_ID sudah ada di atas
+    status_msg = None
+
+    if trigger_event:
+        # Jika dipicu tombol admin
+        target_chat_id = trigger_event.chat_id
+        await trigger_event.answer("🔄 Memulai proses restart...", alert=True)
+        status_msg = await trigger_event.edit("🔄 **SYSTEM RESTART INITIATED**\n\nSedang mengirim notifikasi ke seluruh member...")
+    else:
+        # Jika dipicu Auto Update
+        status_msg = await bot.send_message(ADMIN_ID, "🔄 **AUTO UPDATE DETECTED**\n\nSedang mengirim notifikasi ke seluruh member...")
+
+    # 2. Broadcast Peringatan ke Semua Member
+    members = get_all_members_safe() # Pastikan fungsi ini tersedia
     count = 0
     now_str = datetime.now().strftime("%H:%M WIB")
-    
-    # 2. Broadcast Peringatan ke Semua Member
+
     for row in members:
         try:
             uid = str(row.get("User ID"))
-            if uid.isdigit() and int(uid) != ADMIN_ID: # Jangan kirim ke admin sendiri di sini
+            if uid.isdigit() and int(uid) != ADMIN_ID:
                 await bot.send_message(
                     int(uid), 
                     f"⚠️ **PEMBERITAHUAN SISTEM**\n\n"
@@ -590,18 +599,55 @@ async def cb_restart(event):
                     f"🕒 Waktu: **{now_str}**"
                 )
                 count += 1
-                await asyncio.sleep(0.1) # Delay kecil agar tidak flood
+                await asyncio.sleep(0.1) 
         except: pass
-            
-    await msg.edit(f"✅ Broadcast terkirim ke {count} member.\n🔄 **Me-restart Server Sekarang...**")
     
-    # 3. Simpan Flag Restart agar Main.py tahu harus kirim "Sistem Online"
-    # Simpan chat_id dan msg_id admin agar pesan bisa diedit saat nyala
+    # Update status ke Admin
+    final_text = f"✅ Broadcast terkirim ke {count} member.\n🔄 **Me-restart Server Sekarang...**"
+    if status_msg:
+        await status_msg.edit(final_text)
+
+    # 3. Simpan Flag Restart
+    # Kita simpan ID pesan status_msg agar nanti pas nyala bisa diedit jadi "Sistem Online"
     with open("RESTART_FLAG.json", "w") as f: 
-        json.dump({"chat_id": event.chat_id, "msg_id": msg.id, "admin_id": event.sender_id}, f)
+        json.dump({
+            "chat_id": target_chat_id, 
+            "msg_id": status_msg.id if status_msg else None, 
+            "admin_id": ADMIN_ID,
+            "type": "auto" if trigger_event is None else "manual"
+        }, f)
         
+    # 4. Eksekusi Restart
+    print("Mengeksekusi os.execl...")
     os.execl(sys.executable, sys.executable, *sys.argv)
 
+
+# --- HANDLER 1: TOMBOL ADMIN (Manual) ---
+@bot.on(events.CallbackQuery(pattern=b"cmd_admin_restart"))
+async def cb_restart(event):
+    if event.sender_id != ADMIN_ID: return
+    # Panggil fungsi inti dengan membawa event tombol
+    await execute_restart_sequence(trigger_event=event)
+
+
+# --- HANDLER 2: PEMANTAU AUTO UPDATE (Otomatis) ---
+async def auto_update_watcher():
+    print("Auto-update watcher started...")
+    while True:
+        # Cek apakah file penanda dari script bash ada
+        if os.path.exists("restart_trigger.txt"):
+            print("File trigger ditemukan! Memulai sequence restart...")
+            try:
+                os.remove("restart_trigger.txt") # Hapus file segera
+            except: pass
+            
+            # Panggil fungsi inti TANPA event (None)
+            await execute_restart_sequence(trigger_event=None)
+        
+        await asyncio.sleep(10) # Cek setiap 10 detik
+# --- JALANKAN WATCHER ---
+# Letakkan baris ini SEBELUM bot.run_until_disconnected()
+bot.loop.create_task(auto_update_watcher())
 # ==================================================================
 # SHUTDOWN HANDLER (BARU)
 # ==================================================================
