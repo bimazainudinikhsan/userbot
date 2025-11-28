@@ -1,14 +1,15 @@
 # bmcodexbot/bot_handlers/auth.py
 import time
-from telethon import events, Button, TelegramClient
+from telethon import events, Button, TelegramClient, errors
 from telethon.sessions import StringSession
-from telethon.errors import MessageNotModifiedError
 from config import bot, API_ID, API_HASH
-from database import find_member_row
+from database import find_member_row, log_history
 from state import ACTIVE_USERBOTS, LOGIN_STATE
 from modules.autoreply import get_user_settings
 
-# --- MENU SETTING & KONEKSI ---
+# ==========================================
+# 1. MENU SETTING & KONEKSI
+# ==========================================
 @bot.on(events.CallbackQuery(pattern=b"menu_connect_ub"))
 async def cb_connect_ub_menu(event):
     user_id = event.sender_id
@@ -45,13 +46,16 @@ async def cb_connect_ub_menu(event):
     ]
     
     try:
-        await event.edit(text, buttons=buttons)
-    except MessageNotModifiedError:
-        await event.answer("✅ Status sudah paling update.")
+        if hasattr(event, 'edit'):
+            await event.edit(text, buttons=buttons)
+        else:
+            await event.respond(text, buttons=buttons)
     except Exception as e:
-        print(f"Error updating menu: {e}")
+        pass # Ignore message not modified
 
-# --- PROSES LOGIN ---
+# ==========================================
+# 2. PROSES LOGIN (TOMBOL)
+# ==========================================
 @bot.on(events.CallbackQuery(pattern=b"start_auth_process"))
 async def cb_start_auth(event):
     user_id = event.sender_id
@@ -60,34 +64,43 @@ async def cb_start_auth(event):
     if not row: return await event.answer("❌ Belum terdaftar.", alert=True)
     if row.get("Status") != "Approved": return await event.answer("❌ Akun tidak aktif.", alert=True)
     
+    # Putuskan koneksi lama jika ada
     if user_id in ACTIVE_USERBOTS:
         try:
             await ACTIVE_USERBOTS[user_id].disconnect()
         except: pass
         if user_id in ACTIVE_USERBOTS: del ACTIVE_USERBOTS[user_id]
 
+    # Inisialisasi Client Baru untuk Login
     new_client = TelegramClient(StringSession(), API_ID, API_HASH)
     await new_client.connect()
-    LOGIN_STATE[user_id] = {"step": "phone", "client": new_client}
+    
+    LOGIN_STATE[user_id] = {
+        "step": "phone", 
+        "client": new_client,
+        "phone": None,
+        "phone_code_hash": None
+    }
     
     await event.edit(
-        "📱 **HUBUNGKAN AKUN**\n\nSilakan kirim Nomor HP Anda.\nContoh: `+62812345678`", 
+        "📱 **LOGIN USERBOT**\n\n"
+        "Silakan kirim **Nomor HP** akun Telegram Anda.\n"
+        "Format: Kode Negara + Nomor (Contoh: `+628123456789`)", 
         buttons=[Button.inline("❌ Batal", b"cancel_login")]
     )
 
-# --- HANDLER RETRY CODE (BARU) ---
 @bot.on(events.CallbackQuery(pattern=b"retry_code"))
 async def cb_retry_code(event):
     user_id = event.sender_id
     if user_id not in LOGIN_STATE:
-        return await event.edit("❌ Sesi telah berakhir. Silakan mulai ulang.", buttons=[[Button.inline("🔄 Mulai Ulang", b"start_auth_process")]])
+        return await event.edit("❌ Sesi habis. Mulai ulang.", buttons=[[Button.inline("🔄 Ulangi", b"start_auth_process")]])
     
-    # Kembalikan ke prompt kode tanpa reset client
     LOGIN_STATE[user_id]["step"] = "code"
-    
     await event.edit(
-        "📩 **Input Ulang Kode OTP**\n\nSilakan masukkan kode yang baru saja Anda terima di Telegram.\n(Format: 1 2 3 4 5)",
-        buttons=[[Button.inline("❌ Batal Login", b"cancel_login")]]
+        "📩 **INPUT KODE ULANG**\n\n"
+        "Silakan masukkan kode OTP Telegram.\n"
+        "Contoh: `1 2 3 4 5` (Pakai spasi agar tidak jadi link)",
+        buttons=[[Button.inline("❌ Batal", b"cancel_login")]]
     )
 
 @bot.on(events.CallbackQuery(pattern=b"cancel_login"))
@@ -99,3 +112,122 @@ async def cb_cancel_login(event):
         del LOGIN_STATE[user_id]
     
     await cb_connect_ub_menu(event)
+
+# ==========================================
+# 3. HANDLER INPUT TEKS (PENTING!)
+# ==========================================
+@bot.on(events.NewMessage(incoming=True))
+async def auth_input_handler(event):
+    user_id = event.sender_id
+    
+    # Cek apakah user sedang dalam proses login
+    if user_id not in LOGIN_STATE:
+        return # Abaikan jika tidak sedang login
+
+    if event.text.startswith("/"): return # Abaikan command
+
+    state = LOGIN_STATE[user_id]
+    step = state["step"]
+    client = state["client"]
+
+    # --- LANGKAH 1: TERIMA NOMOR HP ---
+    if step == "phone":
+        phone_number = event.text.strip().replace(" ", "")
+        
+        msg = await event.reply("🔄 **Memproses nomor...**\nMohon tunggu sebentar.")
+        
+        try:
+            # Request Kode OTP ke Telegram
+            send_code = await client.send_code_request(phone_number)
+            
+            # Simpan data penting
+            state["phone"] = phone_number
+            state["phone_code_hash"] = send_code.phone_code_hash
+            state["step"] = "code" # Pindah ke langkah berikutnya
+            
+            await msg.edit(
+                f"✅ **Kode Terkirim!**\n\n"
+                f"Kode OTP telah dikirim ke akun Telegram nomor `{phone_number}`.\n\n"
+                f"👉 **Silakan balas pesan ini dengan KODE OTP tersebut.**\n"
+                f"Format: `1 2 3 4 5` (Gunakan spasi)",
+                buttons=[Button.inline("❌ Batal", b"cancel_login")]
+            )
+            
+        except errors.PhoneNumberInvalidError:
+            await msg.edit("❌ **Nomor HP Tidak Valid.**\nPastikan pakai kode negara (cth: +62...)", buttons=[Button.inline("Ulangi", b"start_auth_process")])
+            del LOGIN_STATE[user_id]
+        except errors.FloodWaitError as e:
+            await msg.edit(f"❌ **Terkena Limit (FloodWait)**\nTunggu {e.seconds} detik sebelum mencoba lagi.", buttons=[Button.inline("Batal", b"cancel_login")])
+            del LOGIN_STATE[user_id]
+        except Exception as e:
+            await msg.edit(f"❌ **Error:** {str(e)}", buttons=[Button.inline("Batal", b"cancel_login")])
+            print(f"Auth Error: {e}")
+            del LOGIN_STATE[user_id]
+
+    # --- LANGKAH 2: TERIMA KODE OTP ---
+    elif step == "code":
+        # Hapus spasi jika user mengetik "1 2 3 4 5"
+        otp_code = event.text.replace(" ", "")
+        
+        msg = await event.reply("🔄 **Verifikasi Kode...**")
+        
+        try:
+            await client.sign_in(state["phone"], otp_code, phone_code_hash=state["phone_code_hash"])
+            
+            # Jika sukses login
+            string_session = StringSession.save(client.session)
+            ACTIVE_USERBOTS[user_id] = client # Simpan client aktif
+            
+            # Hapus state login
+            del LOGIN_STATE[user_id]
+            
+            await msg.edit(
+                "🎉 **LOGIN BERHASIL!**\n\n"
+                "Userbot Anda sekarang aktif.\n"
+                "Ketik `.alive` di Saved Messages untuk tes.",
+                buttons=[Button.inline("⚙️ Menu Pengaturan", b"menu_connect_ub")]
+            )
+            
+            # Opsional: Simpan session ke DB disini jika mau persistent
+            # save_user_session(user_id, string_session)
+
+        except errors.SessionPasswordNeededError:
+            # Jika user pakai 2FA (Verifikasi 2 Langkah)
+            state["step"] = "password"
+            await msg.edit(
+                "🔐 **Butuh Password 2FA**\n\n"
+                "Akun ini dilindungi verifikasi 2 langkah.\n"
+                "👉 **Silakan balas dengan PASSWORD Anda.**",
+                buttons=[Button.inline("❌ Batal", b"cancel_login")]
+            )
+            
+        except errors.PhoneCodeInvalidError:
+            await msg.edit("❌ **Kode Salah!**\nSilakan coba lagi.", buttons=[Button.inline("Coba Lagi", b"retry_code")])
+        except errors.PhoneCodeExpiredError:
+            await msg.edit("❌ **Kode Kadaluarsa.**\nMulai ulang login.", buttons=[Button.inline("Ulangi", b"start_auth_process")])
+            del LOGIN_STATE[user_id]
+        except Exception as e:
+            await msg.edit(f"❌ Error: {e}")
+
+    # --- LANGKAH 3: TERIMA PASSWORD 2FA (JIKA ADA) ---
+    elif step == "password":
+        password = event.text
+        msg = await event.reply("🔄 **Verifikasi Password...**")
+        
+        try:
+            await client.sign_in(password=password)
+            
+            # Login Sukses
+            ACTIVE_USERBOTS[user_id] = client
+            del LOGIN_STATE[user_id]
+            
+            await msg.edit(
+                "🎉 **LOGIN BERHASIL (2FA)!**\n\n"
+                "Userbot Anda sekarang aktif.",
+                buttons=[Button.inline("⚙️ Menu Pengaturan", b"menu_connect_ub")]
+            )
+            
+        except errors.PasswordHashInvalidError:
+            await msg.edit("❌ **Password Salah.**\nSilakan coba lagi.", buttons=[Button.inline("Batal", b"cancel_login")])
+        except Exception as e:
+            await msg.edit(f"❌ Error: {e}")
