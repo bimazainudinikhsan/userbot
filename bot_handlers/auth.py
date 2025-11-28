@@ -182,6 +182,7 @@ async def auth_input_handler(event):
         
         try:
             # PENTING: Ambil hash dengan key yang sama persis "phone_code_hash"
+            # Menggunakan .get() untuk menghindari KeyError jika key tidak ada
             hash_code = state.get("phone_code_hash")
             
             # Pastikan hash tersedia
