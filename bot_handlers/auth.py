@@ -121,7 +121,7 @@ async def cb_retry_code(event):
     await event.edit(
         f"📩 **Input Ulang Kode OTP**\n\n"
         f"Silakan masukkan kode baru yang dikirim ke {phone}.\n"
-        f"(Format: 1 2 3 4 5 atau 12345)",
+        f"(Format: 1 2 3 4 5)",
         buttons=[[Button.inline("❌ Batal Login", b"cancel_login")]]
     )
 
