@@ -3,7 +3,7 @@ import time
 from telethon import events, Button, TelegramClient, errors
 from telethon.sessions import StringSession
 from config import bot, API_ID, API_HASH
-from database import find_member_row, log_history
+from database import find_member_row
 from state import ACTIVE_USERBOTS, LOGIN_STATE
 from modules.autoreply import get_user_settings
 
@@ -51,7 +51,7 @@ async def cb_connect_ub_menu(event):
         else:
             await event.respond(text, buttons=buttons)
     except Exception as e:
-        pass # Ignore message not modified
+        pass 
 
 # ==========================================
 # 2. PROSES LOGIN (TOMBOL)
@@ -64,26 +64,25 @@ async def cb_start_auth(event):
     if not row: return await event.answer("❌ Belum terdaftar.", alert=True)
     if row.get("Status") != "Approved": return await event.answer("❌ Akun tidak aktif.", alert=True)
     
-    # Putuskan koneksi lama jika ada
+    # Reset sesi lama
     if user_id in ACTIVE_USERBOTS:
-        try:
-            await ACTIVE_USERBOTS[user_id].disconnect()
+        try: await ACTIVE_USERBOTS[user_id].disconnect()
         except: pass
         if user_id in ACTIVE_USERBOTS: del ACTIVE_USERBOTS[user_id]
 
-    # Inisialisasi Client Baru untuk Login
-    # Gunakan session baru setiap kali login ulang untuk menghindari konflik
+    # Inisialisasi Client Baru
     new_client = TelegramClient(StringSession(), API_ID, API_HASH)
     await new_client.connect()
     
+    # Reset State Login
     LOGIN_STATE[user_id] = {
         "step": "phone", 
         "client": new_client,
         "phone": None,
-        "phone_code_hash": None # Inisialisasi key ini dengan None
+        "phone_code_hash": None 
     }
     
-    print(f"[AUTH] User {user_id} memulai proses login.")
+    print(f"[AUTH] START: User {user_id} memulai login. Client connected.")
     
     await event.edit(
         "📱 **LOGIN USERBOT**\n\n"
@@ -99,6 +98,8 @@ async def cb_retry_code(event):
         return await event.edit("❌ Sesi habis. Mulai ulang.", buttons=[[Button.inline("🔄 Ulangi", b"start_auth_process")]])
     
     LOGIN_STATE[user_id]["step"] = "code"
+    print(f"[AUTH] RETRY: User {user_id} meminta input ulang kode.")
+    
     await event.edit(
         "📩 **INPUT KODE ULANG**\n\n"
         "Silakan masukkan kode OTP Telegram.\n"
@@ -113,49 +114,54 @@ async def cb_cancel_login(event):
         try: await LOGIN_STATE[user_id]["client"].disconnect()
         except: pass
         del LOGIN_STATE[user_id]
-        print(f"[AUTH] User {user_id} membatalkan login.")
+        print(f"[AUTH] CANCEL: User {user_id} membatalkan login.")
     
     await cb_connect_ub_menu(event)
 
 # ==========================================
-# 3. HANDLER INPUT TEKS (PENTING!)
+# 3. HANDLER INPUT TEKS (DEBUGGED)
 # ==========================================
 @bot.on(events.NewMessage(incoming=True))
 async def auth_input_handler(event):
     user_id = event.sender_id
     
-    # Cek apakah user sedang dalam proses login
     if user_id not in LOGIN_STATE:
-        return # Abaikan jika tidak sedang login
+        return 
 
-    if event.text.startswith("/"): return # Abaikan command
+    if event.text.startswith("/"): return 
 
     state = LOGIN_STATE[user_id]
     step = state.get("step")
     client = state.get("client")
 
     if not client:
-        print(f"[AUTH] Client object missing for user {user_id}")
+        print(f"[AUTH ERROR] Client object missing for user {user_id}")
         del LOGIN_STATE[user_id]
         return 
 
     # --- LANGKAH 1: TERIMA NOMOR HP ---
     if step == "phone":
-        # Bersihkan nomor HP dari spasi dan dash
-        phone_number = event.text.strip().replace(" ", "").replace("-", "")
+        # Bersihkan input sebersih mungkin
+        raw_text = event.text.strip()
+        phone_number = "".join(filter(str.isdigit, raw_text))
+        if raw_text.startswith("+"):
+            phone_number = "+" + phone_number
+            
+        print(f"[AUTH] PHONE STEP: Menerima nomor {phone_number} dari user {user_id}")
         
         msg = await event.reply("🔄 **Memproses nomor...**\nMohon tunggu sebentar.")
         
         try:
-            # Request Kode OTP ke Telegram
             send_code = await client.send_code_request(phone_number)
             
-            # PENTING: Simpan hash yang benar dengan nama key "phone_code_hash"
-            state["phone"] = phone_number
-            state["phone_code_hash"] = send_code.phone_code_hash 
-            state["step"] = "code" # Pindah ke langkah berikutnya
+            # SIMPAN HASH DENGAN EKSPLISIT
+            LOGIN_STATE[user_id]["phone"] = phone_number
+            LOGIN_STATE[user_id]["phone_code_hash"] = send_code.phone_code_hash
+            LOGIN_STATE[user_id]["step"] = "code"
             
-            print(f"[AUTH] Kode terkirim ke {phone_number}. Hash: {send_code.phone_code_hash[:10]}...")
+            # Debug Print: Pastikan hash tersimpan
+            saved_hash = LOGIN_STATE[user_id].get("phone_code_hash")
+            print(f"[AUTH] SUCCESS SEND CODE: Hash '{saved_hash}' disimpan untuk user {user_id}")
             
             await msg.edit(
                 f"✅ **Kode Terkirim!**\n\n"
@@ -167,67 +173,56 @@ async def auth_input_handler(event):
             
         except errors.PhoneNumberInvalidError:
             await msg.edit("❌ **Nomor HP Tidak Valid.**\nPastikan pakai kode negara (cth: +62...)", buttons=[Button.inline("Ulangi", b"start_auth_process")])
-            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except errors.FloodWaitError as e:
-            await msg.edit(f"❌ **Terkena Limit (FloodWait)**\nTunggu {e.seconds} detik sebelum mencoba lagi.", buttons=[Button.inline("Batal", b"cancel_login")])
-            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
+            await msg.edit(f"❌ **Terkena Limit (FloodWait)**\nTunggu {e.seconds} detik.", buttons=[Button.inline("Batal", b"cancel_login")])
         except Exception as e:
             await msg.edit(f"❌ **Error:** {str(e)}", buttons=[Button.inline("Batal", b"cancel_login")])
-            print(f"[AUTH ERROR] Phone Step: {e}")
-            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
+            print(f"[AUTH ERROR] Phone Step Exception: {e}")
 
     # --- LANGKAH 2: TERIMA KODE OTP ---
     elif step == "code":
-        # Hapus spasi dan strip jika user mengetik "1 2 3 4 5" atau "1-2-3-4-5"
-        otp_code = event.text.replace(" ", "").replace("-", "").strip()
+        # Ambil hanya angka dari input
+        otp_code = "".join(filter(str.isdigit, event.text))
         
-        # Validasi sederhana input kode
-        if not otp_code.isdigit():
-            await event.reply("⚠️ **Format Kode Salah!**\nHarap masukkan hanya angka kode OTP.", buttons=[[Button.inline("Batal", b"cancel_login")]])
+        if not otp_code:
+            await event.reply("⚠️ **Format Salah!** Masukkan angka saja.", buttons=[[Button.inline("Batal", b"cancel_login")]])
             return
 
         msg = await event.reply("🔄 **Verifikasi Kode...**")
         
         try:
-            # PENTING: Ambil hash dengan key yang sama persis "phone_code_hash"
-            # Menggunakan .get() untuk menghindari KeyError jika key tidak ada
-            hash_code = state.get("phone_code_hash")
-            phone_num = state.get("phone")
+            # DEBUG: Cek isi state sebelum sign_in
+            current_state = LOGIN_STATE.get(user_id, {})
+            hash_code = current_state.get("phone_code_hash")
+            phone_num = current_state.get("phone")
             
-            # Pastikan hash tersedia dan valid
-            if not hash_code or not phone_num:
-                print(f"[AUTH ERROR] Hash hilang untuk user {user_id}. Data: {state}")
-                await msg.edit("❌ **Sesi Error:** Data verifikasi hilang. Silakan Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
+            print(f"[AUTH] CODE STEP: Verifikasi User {user_id} | Hash: {hash_code} | Phone: {phone_num} | Code: {otp_code}")
+
+            if not hash_code:
+                print(f"[AUTH FATAL] Hash code KOSONG/HILANG untuk user {user_id}!")
+                await msg.edit("❌ **Sesi Error:** Data verifikasi hilang dari memori. Silakan Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
                 del LOGIN_STATE[user_id]
                 return
 
-            print(f"[AUTH] Verifikasi kode {otp_code} untuk {phone_num} dengan hash {hash_code[:10]}...")
-
-            # Gunakan parameter yang benar: phone_code_hash
+            # EKSEKUSI LOGIN
             await client.sign_in(phone_num, otp_code, phone_code_hash=hash_code)
             
-            # Jika sukses login
-            # Simpan object client ke memori ACTIVE_USERBOTS
             ACTIVE_USERBOTS[user_id] = client 
-            
-            # Hapus state login
             del LOGIN_STATE[user_id]
-            print(f"[AUTH] Login SUKSES untuk user {user_id}")
             
             me = await client.get_me()
             name = me.first_name or "User"
+            print(f"[AUTH] LOGIN SUKSES: {name} ({user_id})")
             
             await msg.edit(
                 f"🎉 **LOGIN BERHASIL!**\n\n"
-                f"Halo, **{name}**! Userbot Anda aktif.\n"
-                "Ketik `.alive` di Saved Messages untuk tes.",
+                f"Halo, **{name}**! Userbot Anda aktif.",
                 buttons=[Button.inline("⚙️ Menu Pengaturan", b"menu_connect_ub")]
             )
 
         except errors.SessionPasswordNeededError:
-            # Jika user pakai 2FA (Verifikasi 2 Langkah)
-            state["step"] = "password"
-            print(f"[AUTH] Butuh 2FA untuk user {user_id}")
+            LOGIN_STATE[user_id]["step"] = "password"
+            print(f"[AUTH] 2FA REQUIRED: User {user_id}")
             await msg.edit(
                 "🔐 **Butuh Password 2FA**\n\n"
                 "Akun ini dilindungi verifikasi 2 langkah.\n"
@@ -236,15 +231,14 @@ async def auth_input_handler(event):
             )
             
         except errors.PhoneCodeInvalidError:
-            await msg.edit("❌ **Kode Salah!**\nSilakan coba lagi.", buttons=[[Button.inline("Coba Lagi", b"retry_code")]])
+            await msg.edit("❌ **Kode Salah!**", buttons=[[Button.inline("Coba Lagi", b"retry_code")]])
         except errors.PhoneCodeExpiredError:
-            await msg.edit("❌ **Kode Kadaluarsa.**\nMulai ulang login.", buttons=[[Button.inline("Ulangi", b"start_auth_process")]])
-            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
+            await msg.edit("❌ **Kode Kadaluarsa.**", buttons=[[Button.inline("Ulangi", b"start_auth_process")]])
         except Exception as e:
             await msg.edit(f"❌ **Error Login:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
-            print(f"[AUTH ERROR] Code Step: {e}")
+            print(f"[AUTH ERROR] Code Step Exception: {e}")
 
-    # --- LANGKAH 3: TERIMA PASSWORD 2FA (JIKA ADA) ---
+    # --- LANGKAH 3: TERIMA PASSWORD 2FA ---
     elif step == "password":
         password = event.text.strip()
         msg = await event.reply("🔄 **Verifikasi Password...**")
@@ -252,13 +246,12 @@ async def auth_input_handler(event):
         try:
             await client.sign_in(password=password)
             
-            # Login Sukses
             ACTIVE_USERBOTS[user_id] = client
             del LOGIN_STATE[user_id]
-            print(f"[AUTH] Login 2FA SUKSES untuk user {user_id}")
             
             me = await client.get_me()
             name = me.first_name or "User"
+            print(f"[AUTH] LOGIN 2FA SUKSES: {name} ({user_id})")
             
             await msg.edit(
                 f"🎉 **LOGIN BERHASIL (2FA)!**\n\n"
@@ -267,7 +260,6 @@ async def auth_input_handler(event):
             )
             
         except errors.PasswordHashInvalidError:
-            await msg.edit("❌ **Password Salah.**\nSilakan coba lagi.", buttons=[[Button.inline("Batal", b"cancel_login")]])
+            await msg.edit("❌ **Password Salah.**", buttons=[[Button.inline("Batal", b"cancel_login")]])
         except Exception as e:
             await msg.edit(f"❌ **Error 2FA:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
-            print(f"[AUTH ERROR] 2FA Step: {e}")
