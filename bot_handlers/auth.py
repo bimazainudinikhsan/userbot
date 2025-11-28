@@ -79,7 +79,7 @@ async def cb_start_auth(event):
         "step": "phone", 
         "client": new_client,
         "phone": None,
-        "phone_code_hash": None
+        "phone_code_hash": None # Inisialisasi key ini dengan None
     }
     
     await event.edit(
@@ -135,6 +135,7 @@ async def auth_input_handler(event):
 
     # --- LANGKAH 1: TERIMA NOMOR HP ---
     if step == "phone":
+        # Bersihkan nomor HP dari spasi dan dash
         phone_number = event.text.strip().replace(" ", "").replace("-", "")
         
         msg = await event.reply("🔄 **Memproses nomor...**\nMohon tunggu sebentar.")
@@ -143,9 +144,9 @@ async def auth_input_handler(event):
             # Request Kode OTP ke Telegram
             send_code = await client.send_code_request(phone_number)
             
-            # Simpan data penting
+            # PENTING: Simpan hash yang benar dengan nama key "phone_code_hash"
             state["phone"] = phone_number
-            state["phone_code_hash"] = send_code.phone_code_hash
+            state["phone_code_hash"] = send_code.phone_code_hash 
             state["step"] = "code" # Pindah ke langkah berikutnya
             
             await msg.edit(
@@ -180,19 +181,20 @@ async def auth_input_handler(event):
         msg = await event.reply("🔄 **Verifikasi Kode...**")
         
         try:
+            # PENTING: Ambil hash dengan key yang sama persis "phone_code_hash"
+            hash_code = state.get("phone_code_hash")
+            
             # Pastikan hash tersedia
-            if not state.get("phone_code_hash"):
+            if not hash_code:
                 await msg.edit("❌ **Sesi Error:** Phone Hash hilang. Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
                 del LOGIN_STATE[user_id]
                 return
 
-            await client.sign_in(state["phone"], otp_code, phone_code_hash=state["phone_code_hash"])
+            # Gunakan parameter yang benar: phone_code_hash
+            await client.sign_in(state["phone"], otp_code, phone_code_hash=hash_code)
             
             # Jika sukses login
-            # string_session = StringSession.save(client.session) # Tidak perlu save string manual jika client masih connect, tapi untuk persistence perlu.
-            # Namun Userbot biasanya jalan terus. Kalau mau save session string untuk restart, simpan ke DB.
-            # Disini kita simpan object client ke memori ACTIVE_USERBOTS
-            
+            # Simpan object client ke memori ACTIVE_USERBOTS
             ACTIVE_USERBOTS[user_id] = client 
             
             # Hapus state login
