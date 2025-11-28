@@ -1,9 +1,9 @@
 # database.py
+import os
 from datetime import datetime, timedelta
 from config import spreadsheet
 
 # Setup Worksheets
-
 member_sheet = None
 history_sheet = None
 
@@ -20,16 +20,15 @@ def ensure_sheets():
             member.append_row(["User ID", "Nama", "Email", "Status", "Expired", "Join Time", "Session String", "Permissions"])
         
         member_sheet = spreadsheet.worksheet("Member")
-        current_header = member_sheet.row_values(1)
         
+        # Cek Header
+        current_header = member_sheet.row_values(1)
         # Header Standar yang Wajib Ada
         STANDARD_HEADER = ["User ID", "Nama", "Email", "Status", "Expired", "Join Time", "Session String", "Permissions"]
         
         # Fix Header jika belum lengkap (Update Kolom 8)
         if len(current_header) < 8:
-            print("Memperbaiki Header Sheet Member (Menambah Kolom Permission)...")
-            if member_sheet.col_count < 8:
-                member_sheet.resize(cols=8)
+            if member_sheet.col_count < 8: member_sheet.resize(cols=8)
             for col_num, val in enumerate(STANDARD_HEADER, 1):
                 member_sheet.update_cell(1, col_num, val)
 
@@ -64,11 +63,13 @@ def find_member_row(user_id_str):
         print(f"Error finding member: {e}")
     return None, None
 
-def append_member(user_id, name="-", email="-", months=1):
+def append_member(user_id, name="-", email="-", months=0):
     join_time = datetime.now().strftime("%d-%m-%Y %H:%M")
-    expire = (datetime.now() + timedelta(days=30 * months)).strftime("%d-%m-%Y")
-    # Col 8 is Permissions (Default "ALL")
-    member_sheet.append_row([str(user_id), name, email, "Approved", expire, join_time, "", "ALL"])
+    # Expired default 1 hari dulu (dummy), nanti diupdate saat approve/bayar
+    expire = (datetime.now() + timedelta(days=1)).strftime("%d-%m-%Y")
+    
+    # --- STATUS DEFAULT 'Pending' AGAR TIDAK LANGSUNG AKTIF ---
+    member_sheet.append_row([str(user_id), name, email, "Pending", expire, join_time, "", "ALL"])
     return expire
 
 def update_member_expire(row_idx, new_expire_str):
@@ -100,7 +101,7 @@ def log_history(user_id, months, total, status):
     ts = datetime.now().strftime("%d-%m-%Y %H:%M")
     history_sheet.append_row([str(user_id), str(months), str(total), status, ts])
 
-# --- FUNGSI PERMISSION BARU ---
+# --- FUNGSI PERMISSION (YANG SEBELUMNYA HILANG) ---
 
 def get_member_permissions(user_id):
     """Mengambil list izin fitur dari database (Kolom 8)"""

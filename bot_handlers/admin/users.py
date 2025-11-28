@@ -74,6 +74,7 @@ async def cb_admin_status_list(event):
     action_row = [Button.inline(search_btn_text, b"ADM_SEARCH_MODE")]
     if query: action_row.append(Button.inline("❌ Reset", b"ADM_RESET_SEARCH"))
     buttons.append(action_row)
+    # PERBAIKAN TOMBOL KEMBALI
     buttons.append([Button.inline("🔙 Kembali ke Dashboard", b"menu_admin_dashboard")])
 
     header_text = f"📊 **DAFTAR MEMBER**\nTotal: {len(all_records)} | ⚡ Online: {online_count}\n"
@@ -100,7 +101,6 @@ async def cb_admin_reset_search(event):
 
 # --- Detail User & Edit ---
 async def render_user_detail(event, user_id):
-    """Menampilkan detail user. Fungsi ini diekspor agar bisa dipanggil dari module lain."""
     idx, row = find_member_row(user_id)
     if not row: return await event.edit("❌ Member tidak ditemukan.", buttons=[[Button.inline("🔙 Kembali", b"cmd_admin_status")]])
 
@@ -132,9 +132,7 @@ async def cb_admin_user_detail(event):
     user_id = event.data.decode().split(":")[1]
     await render_user_detail(event, user_id)
 
-# --- FUNGSI BARU: RENDER MORE ACTIONS (Agar bisa di-import) ---
 async def render_more_actions(event, user_id):
-    """Menampilkan menu tindakan lanjutan. Diekspor untuk subscription.py."""
     idx, row = find_member_row(user_id)
     if not row: return await event.answer("Member tidak ditemukan.", alert=True)
 
@@ -160,7 +158,6 @@ async def cb_admin_more_actions(event):
     user_id = event.data.decode().split(":")[1]
     await render_more_actions(event, user_id)
 
-# --- Delete Logic ---
 @bot.on(events.CallbackQuery(pattern=r"ADM_DEL:(.+)"))
 async def cb_admin_delete(event):
     user_id = event.data.decode().split(":")[1]
@@ -180,19 +177,17 @@ async def cb_confirm_delete(event):
             del ACTIVE_USERBOTS[int(user_id)]
         await event.edit(f"✅ User `{user_id}` dihapus.", buttons=[[Button.inline("🔙 List", b"cmd_admin_status")]])
 
-# --- GLOBAL INPUT LISTENER (Edit, Msg, Search, Reject Reason) ---
 @bot.on(events.CallbackQuery(pattern=r"ADM_(MSG|EDIT):(.+)"))
 async def cb_admin_input_mode(event):
     if event.sender_id != ADMIN_ID: return
     mode, user_id = event.data.decode().split(":")[1:]
     ADMIN_ACTION_STATE[ADMIN_ID] = {"action": mode, "target": user_id}
-    
     msg = "💬 **MODE LIVECHAT**" if mode == "MSG" else "✏️ **EDIT DATA**\nFormat: `Nama | Email`"
     await event.edit(f"{msg}\n\nKetik `/batal` untuk keluar.")
 
 @bot.on(events.NewMessage(from_users=ADMIN_ID))
 async def admin_input_listener(event):
-    # Handle Reject Comment Logic (Payment)
+    # Handle Reject Payment
     if ADMIN_ID in awaiting_reject_comment and not event.text.startswith('/'):
         tx_id = awaiting_reject_comment.pop(ADMIN_ID)
         tx = pending_tx.pop(tx_id, {})
@@ -204,7 +199,6 @@ async def admin_input_listener(event):
             await event.reply(f"✅ Transaksi ditolak.")
         return
 
-    # Handle General Input
     if ADMIN_ID not in ADMIN_ACTION_STATE: return
     
     if event.text == "/batal":
@@ -241,4 +235,6 @@ async def admin_input_listener(event):
         del ADMIN_ACTION_STATE[ADMIN_ID]
         await event.reply(f"🔍 Mencari: `{event.text}`...")
         msg = await event.respond("🔄 Loading...")
-        await msg.edit(f"Hasil Pencarian", buttons=[[Button.inline("📂 LIHAT HASIL", b"cmd_admin_status")]])
+        # Reset page ke 0
+        event.data = b"cmd_admin_status:0"
+        await cb_admin_status_list(msg)

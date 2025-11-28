@@ -10,15 +10,14 @@ from datetime import datetime
 
 from telethon import TelegramClient, Button
 from telethon.sessions import StringSession
-from telethon.errors import PersistentTimestampOutdatedError, SecurityError
+from telethon.errors import PersistentTimestampOutdatedError, SecurityError, AuthKeyError
 
-# Import Modules
 from config import bot, API_ID, API_HASH, BOT_TOKEN, ADMIN_ID
-from database import get_all_members_safe
+from database import get_all_members_safe, save_session_to_sheet
 from state import ACTIVE_USERBOTS, GLOBAL_CONFIG
 from aktif_fitur import start_userbot
 
-# Import handlers & Menu Helper
+# Import Modules
 import bot_handlers.admin
 import bot_handlers.nav
 import bot_handlers.auth
@@ -26,15 +25,13 @@ import bot_handlers.payment
 import bot_handlers.messages
 import bot_handlers.livechat
 import bot_handlers.remote_app
-
-# Import Spambot untuk Resume
-from modules import spambot 
+from modules import auto_spam 
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - MANAGER - %(levelname)s - %(message)s')
 
 # ===============================================
-# FUNGSI CEK KONEKSI INTERNET
+# FUNGSI UTILITY
 # ===============================================
 async def wait_for_internet():
     print("🔄 Memeriksa koneksi internet...")
@@ -50,12 +47,9 @@ async def wait_for_internet():
             return was_offline
         except OSError:
             was_offline = True
-            print("❌ Tidak ada internet. Menunggu koneksi... (Coba lagi dalam 5s)", end="\r")
+            print("❌ Tidak ada internet. Menunggu... (Retry 5s)", end="\r")
             await asyncio.sleep(5)
 
-# ===============================================
-# TASK: AUTO CHECK EXPIRED
-# ===============================================
 async def check_expired_loop():
     while True:
         try:
@@ -92,97 +86,51 @@ async def check_expired_loop():
 
         await asyncio.sleep(3600)
 
-# ===============================================
-# FUNGSI BROADCAST STARTUP
-# ===============================================
-async def broadcast_system_online(is_restart=False):
-    print("📢 Mengirim broadcast 'System Online' ke member...")
-    now_str = datetime.now().strftime("%H:%M WIB")
-    
-    all_members = get_all_members_safe()
-    count = 0
-
-    for member in all_members:
+async def send_startup_notification():
+    """Mengirim notifikasi ke admin saat bot baru nyala (terutama setelah restart)"""
+    if os.path.exists("RESTART_FLAG.json"):
         try:
-            uid_str = str(member.get("User ID"))
-            if not uid_str.isdigit(): continue
+            with open("RESTART_FLAG.json", "r") as f:
+                data = json.load(f)
             
-            user_id = int(uid_str)
-            # Skip admin, karena admin ditangani terpisah via restart flag
-            if user_id == ADMIN_ID: continue 
-
-            is_approved = member.get("Status") == "Approved"
+            # 1. Hapus Pesan "Restarting..." lama
+            try:
+                await bot.delete_messages(data.get("chat_id"), data.get("msg_id"))
+            except: pass
             
-            menu_text, menu_buttons = get_main_menu_data(is_approved)
+            # 2. Kirim Dashboard Admin Langsung
+            # Kita import dashboard di sini untuk memastikan handler sudah siap
+            from bot_handlers.admin.dashboard import send_admin_dashboard
             
-            if is_restart:
-                header = (
-                    f"✅ **SISTEM KEMBALI ONLINE**\n"
-                    f"🕒 Waktu: `{now_str}`\n\n"
-                    f"Terima kasih telah menunggu. Layanan kini sudah aktif kembali.\n"
-                    f"Silakan pilih menu di bawah untuk melanjutkan:\n\n"
-                    f"➖➖➖➖➖➖➖➖➖➖\n\n"
-                )
-            else:
-                header = (
-                    f"✅ **BOT CLEAR VIRUS KEMBALI AKTIF**\n"
-                    f"🕒 Waktu: `{now_str}`\n\n"
-                    f"Layanan sudah siap digunakan kembali.\n\n"
-                    f"➖➖➖➖➖➖➖➖➖➖\n\n"
-                )
+            # Kita buat object dummy event agar kompatibel dengan handler dashboard
+            # Atau panggil fungsi helper dashboard jika ada
             
-            # INI YANG MEMBUAT USER LANGSUNG DAPAT MENU NAVIGASI
-            full_message = header + menu_text
+            await bot.send_message(
+                ADMIN_ID,
+                "✅ **SYSTEM REBOOT SUCCESS**\nBot telah aktif kembali.",
+                buttons=[[Button.inline("👑 Buka Dashboard Admin", b"cmd_admin_dashboard")]]
+            )
             
-            await bot.send_message(user_id, full_message, buttons=menu_buttons)
-            count += 1
-            await asyncio.sleep(0.1) 
+            # Hapus flag agar tidak double notif next time
+            os.remove("RESTART_FLAG.json")
             
-        except Exception:
-            pass 
-            
-    print(f"✅ Broadcast terkirim ke {count} member.")
-
-async def send_admin_dashboard_startup(target_id):
-    # Ini memanggil fungsi dashboard yang sudah ada di admin.py
-    # Tapi kita perlu trigger dummy event atau kirim pesan baru
-    try:
-        is_trial_on = GLOBAL_CONFIG.get("free_trial", False)
-        status_trial = "✅ ON" if is_trial_on else "❌ OFF"
-        
-        text = (
-            "✅ **SISTEM ONLINE**\n"
-            "Restart berhasil diselesaikan.\n\n"
-            "👑 **ADMIN DASHBOARD**\n"
-            "Selamat datang kembali, Admin! Silakan pilih menu manajemen:"
-        )
-        buttons = [
-            [Button.inline(f"🆓 Mode Free Trial: {status_trial}", b"TOGGLE_TRIAL")],
-            [Button.inline("👥 Manajemen Member", b"cmd_admin_status")],
-            [Button.inline("🌍 On/Off Fitur Global", b"cmd_global_fitur"), Button.inline("👤 Izin Fitur User", b"cmd_admin_fitur")],
-            [Button.inline("🔄 Restart System", b"cmd_admin_restart"), Button.inline("🛑 Shutdown", b"cmd_admin_shutdown")],
-            [Button.inline("ℹ️ Bantuan", b"cmd_admin_help")]
-        ]
-        await bot.send_message(target_id, text, buttons=buttons)
-    except Exception as e:
-        print(f"❌ Gagal kirim dashboard admin: {e}")
+        except Exception as e:
+            print(f"⚠️ Gagal memproses restart flag: {e}")
+            if os.path.exists("RESTART_FLAG.json"): os.remove("RESTART_FLAG.json")
+    else:
+        # Start manual (bukan restart via bot), opsional mau kirim notif atau tidak
+        print("ℹ️ Bot started manually.")
 
 # ===============================================
 # MAIN FUNCTION
 # ===============================================
 async def main():
-    was_offline_at_start = await wait_for_internet()
-
+    await wait_for_internet()
     print("🚀 Memulai Bot Manager...")
     
     try:
         bot.use_ipv6 = False 
         await bot.start(bot_token=BOT_TOKEN)
-    except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
-        print(f"⚠️ Terdeteksi FILE SESI RUSAK ({e}). Resetting...")
-        if os.path.exists("bot_session.session"): os.remove("bot_session.session")
-        if os.path.exists("bot.session"): os.remove("bot.session")
-        return
     except Exception as e:
         print(f"❌ Gagal Start Bot: {e}")
         return
@@ -190,50 +138,14 @@ async def main():
     me = await bot.get_me()
     print(f"✅ Bot Manager Online: @{me.username}")
 
-    # ===============================================
-    # 🟢 DETEKSI RESTART & BROADCAST
-    # ===============================================
-    if os.path.exists("restart_status.txt"): # Legacy check
-        os.remove("restart_status.txt") # Hapus file legacy jika ada
-        
-    if os.path.exists("RESTART_FLAG.json"):
-        print("🔄 Mendeteksi pemulihan dari restart...")
-        try:
-            with open("RESTART_FLAG.json", "r") as f:
-                data = json.load(f)
-                chat_id = data.get("chat_id")
-                msg_id = data.get("msg_id")
-                admin_id = data.get("admin_id", ADMIN_ID)
-            
-            # Hapus pesan "Restarting..." yang lama agar bersih
-            try:
-                await bot.delete_messages(chat_id, msg_id)
-            except: pass
-            
-            # Kirim Dashboard Admin Baru
-            await send_admin_dashboard_startup(admin_id)
-            
-            # Broadcast ke semua member (bahwa sistem online + menu)
-            await broadcast_system_online(is_restart=True)
-            
-            os.remove("RESTART_FLAG.json")
-            
-        except Exception as e:
-            print(f"⚠️ Gagal memproses post-restart: {e}")
-            if os.path.exists("RESTART_FLAG.json"): os.remove("RESTART_FLAG.json")
-    
-    else:
-        # Start Manual (Bukan dari tombol restart)
-        print("ℹ️ Start Manual Terdeteksi.")
-        # Kirim dashboard ke admin saat start manual juga (opsional, tapi bagus untuk UX)
-        await send_admin_dashboard_startup(ADMIN_ID)
-        # Broadcast opsional (bisa dimatikan jika mengganggu saat dev)
-        # await broadcast_system_online(is_restart=False) 
+    # --- HANDLE RESTART NOTIFICATION ---
+    await send_startup_notification()
 
-    # ===============================================
-    # RESUME EXISTING USERBOTS & SPAM SESSIONS
-    # ===============================================
+    # --- RESUME USERBOTS ---
     print("🔄 Mengecek userbot yang aktif di Database...")
+    if not os.path.exists("botsession"):
+        os.makedirs("botsession")
+
     try:
         records = get_all_members_safe()
         count = 0
@@ -242,48 +154,66 @@ async def main():
             try:
                 uid = str(row.get("User ID"))
                 status = row.get("Status")
-                sess = row.get("Session String")
+                db_string = row.get("Session String")
                 expired = row.get("Expired")
                 
                 is_active = False
-                if status == "Approved" and sess and sess.strip():
-                    try:
-                        exp_date = datetime.strptime(expired, "%d-%m-%Y")
-                        if datetime.now() < exp_date:
-                            is_active = True
-                    except ValueError: pass
+                try:
+                    exp_date = datetime.strptime(expired, "%d-%m-%Y")
+                    if datetime.now() < exp_date and status == "Approved":
+                        is_active = True
+                except ValueError: pass
                 
                 if is_active:
-                    print(f"▶ Memulai userbot untuk {uid}...")
-                    try:
-                        client = TelegramClient(
-                            StringSession(sess), 
-                            API_ID, 
-                            API_HASH,
-                            connection_retries=3,
-                            flood_sleep_threshold=60,
-                            use_ipv6=False
-                        )
-                        await client.start()
-                        ACTIVE_USERBOTS[int(uid)] = client
-                        asyncio.create_task(start_userbot(client, int(uid)))
-                        
-                        # --- TAMBAHAN: RESUME SPAMBOT ---
-                        await spambot.resume_spam_tasks(client)
-                        
-                        count += 1
-                    
-                    except (PersistentTimestampOutdatedError, SecurityError):
-                        print(f"❌ Sesi Userbot {uid} RUSAK/REVOKED. Menunggu login ulang.")
-                        # Jangan biarkan client aktif
-                        try: await client.disconnect()
+                    user_id_int = int(uid)
+                    client = None
+                    source = "NONE"
+
+                    # 1. Cek File Lokal
+                    local_path = f"botsession/{uid}"
+                    if os.path.exists(f"{local_path}.session"):
+                        try:
+                            client = TelegramClient(local_path, API_ID, API_HASH, connection_retries=2, use_ipv6=False)
+                            source = "FILE"
                         except: pass
-                        
-                    except Exception as e:
-                        print(f"❌ Gagal connect userbot {uid}: {e}")
+
+                    # 2. Cek String DB
+                    if not client and db_string and len(str(db_string)) > 50:
+                        try:
+                            client = TelegramClient(StringSession(db_string), API_ID, API_HASH, connection_retries=2, use_ipv6=False)
+                            source = "STRING"
+                        except: pass
+
+                    # 3. Start Client
+                    if client:
+                        try:
+                            await client.start()
+                            if await client.get_me():
+                                ACTIVE_USERBOTS[user_id_int] = client
+                                asyncio.create_task(start_userbot(client, user_id_int))
+                                await auto_spam.resume_spam_tasks(client)
+                                count += 1
+                                print(f"✅ {uid} ONLINE ({source})")
+                                
+                                # Auto-Sync ke Sheet jika pakai File
+                                if source == "FILE" and (not db_string or len(str(db_string)) < 50):
+                                    ss = StringSession()
+                                    ss.set_dc(client.session.dc_id, client.session.server_address, client.session.port)
+                                    ss.auth_key = client.session.auth_key
+                                    save_session_to_sheet(uid, ss.save())
+                            else:
+                                await client.disconnect()
+                        except (AuthKeyError, SecurityError):
+                            # Jika sesi rusak, hapus file lokal agar user login ulang bersih
+                            try: await client.disconnect()
+                            except: pass
+                            if source == "FILE" and os.path.exists(f"{local_path}.session"):
+                                os.remove(f"{local_path}.session")
+                        except Exception as e:
+                            print(f"❌ Gagal connect {uid}: {e}")
 
             except Exception as e:
-                print(f"❌ Gagal memproses row: {e}")
+                pass # Skip row error
 
         print(f"📊 Total Userbot Berjalan: {count}")
 
@@ -291,14 +221,12 @@ async def main():
         print(f"❌ Error saat loading userbots: {e}")
 
     asyncio.create_task(check_expired_loop())
-
     await bot.run_until_disconnected()
 
 if __name__ == "__main__":
     if platform.system() == 'Windows':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Bot dimatikan.")
+        pass

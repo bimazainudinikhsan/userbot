@@ -2,82 +2,85 @@ from telethon import events, Button, errors
 from config import bot, ADMIN_ID
 from state import GLOBAL_CONFIG
 
-# Import handler remote app agar tombolnya berfungsi
-import bot_handlers.remote_app 
+# ==========================================
+# HELPER: KONTEN DASHBOARD
+# ==========================================
+def get_dashboard_content():
+    """Mengembalikan text dan buttons untuk dashboard admin."""
+    is_trial_on = GLOBAL_CONFIG.get("free_trial", False)
+    status_trial = "✅ ON" if is_trial_on else "❌ OFF"
+    
+    text = (
+        "👑 **ADMINISTRATOR PANEL**\n"
+        "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+        "Selamat datang kembali, Tuan. \n"
+        "Sistem telah siap. Silakan pilih modul manajemen:\n"
+    )
+    
+    buttons = [
+        # Baris 1: Mode Trial & Remote
+        [Button.inline(f"🆓 Free Trial: {status_trial}", b"TOGGLE_TRIAL"),
+         Button.inline("📱 Remote Apps (Firebase)", b"menu_remote_app")],
+        
+        # Baris 2: Member & Fitur
+        [Button.inline("👥 Kelola Member", b"cmd_admin_status"), 
+         Button.inline("🌍 Fitur Global", b"cmd_global_fitur")],
+        
+        # Baris 3: Izin User
+        [Button.inline("🔐 Izin User Spesifik", b"cmd_admin_fitur")],
+        
+        # Baris 4: System
+        [Button.inline("🔄 Restart Bot", b"cmd_admin_restart"), 
+         Button.inline("🛑 Shutdown", b"cmd_admin_shutdown")],
+         
+        # Baris 5: Bantuan
+        [Button.inline("ℹ️ Bantuan Perintah", b"cmd_admin_help")]
+    ]
+    return text, buttons
 
 # ==========================================
 # HANDLER COMMAND /START KHUSUS ADMIN
 # ==========================================
 @bot.on(events.NewMessage(pattern="/start"))
 async def handler_admin_start(event):
-    # Cek apakah pengirim adalah Admin
     if event.sender_id == ADMIN_ID:
-        await show_admin_dashboard(event)
-        # StopPropagation penting agar bot tidak lanjut memproses 
-        # handler /start lain (misalnya menu member biasa di nav.py)
+        text, buttons = get_dashboard_content()
+        await event.respond(text, buttons=buttons)
         raise events.StopPropagation
-
-# ==========================================
-# HANDLER UTAMA DASHBOARD
-# ==========================================
 
 @bot.on(events.NewMessage(pattern="/admin"))
 async def handler_admin(event):
     if event.sender_id != ADMIN_ID: return
-    await show_admin_dashboard(event)
+    text, buttons = get_dashboard_content()
+    await event.respond(text, buttons=buttons)
 
+# ==========================================
+# HANDLER CALLBACK (MENU UTAMA)
+# ==========================================
 @bot.on(events.CallbackQuery(pattern=b"menu_admin_dashboard"))
 async def cb_admin_dashboard(event):
     if event.sender_id != ADMIN_ID: return
-    await show_admin_dashboard(event)
-
-@bot.on(events.CallbackQuery(pattern=b"close_menu"))
-async def cb_close(event):
-    await event.delete()
+    text, buttons = get_dashboard_content()
+    # Edit pesan yang ada (Tindih)
+    await event.edit(text, buttons=buttons)
 
 @bot.on(events.CallbackQuery(pattern=b"TOGGLE_TRIAL"))
 async def cb_toggle_trial(event):
     if event.sender_id != ADMIN_ID: return
     GLOBAL_CONFIG["free_trial"] = not GLOBAL_CONFIG.get("free_trial", False)
-    await show_admin_dashboard(event)
-
-async def show_admin_dashboard(event):
-    is_trial_on = GLOBAL_CONFIG.get("free_trial", False)
-    status_trial = "✅ ON" if is_trial_on else "❌ OFF"
-    
-    text = "👑 **ADMIN DASHBOARD**\nSelamat datang, Admin! Silakan pilih menu manajemen:"
-    
-    buttons = [
-        # Baris 1: Mode Trial
-        [Button.inline(f"🆓 Mode Free Trial: {status_trial}", b"TOGGLE_TRIAL")],
-        
-        # Baris 2: Manajemen Member & REMOTE APP
-        [
-            Button.inline("👥 Manajemen Member", b"cmd_admin_status"),
-            Button.inline("📱 Remote Aplikasi", b"menu_remote_app") 
-        ],
-        
-        # Baris 3: Fitur Global & Izin User
-        [Button.inline("🌍 On/Off Fitur Global", b"cmd_global_fitur"), Button.inline("👤 Izin Fitur User", b"cmd_admin_fitur")],
-        
-        # Baris 4: System
-        [Button.inline("🔄 Restart System", b"cmd_admin_restart"), Button.inline("🛑 Shutdown", b"cmd_admin_shutdown")],
-        
-        # Baris 5: Bantuan & Close
-        [Button.inline("ℹ️ Bantuan", b"cmd_admin_help"), Button.inline("❌ Close", b"close_menu")]
-    ]
-    
-    # PERBAIKAN: Menangani MessageNotModifiedError
-    try:
-        if isinstance(event, events.CallbackQuery.Event):
-            await event.edit(text, buttons=buttons)
-        else:
-            await event.respond(text, buttons=buttons)
-    except errors.MessageNotModifiedError:
-        pass # Abaikan error jika pesan tidak berubah
+    # Refresh dashboard langsung
+    text, buttons = get_dashboard_content()
+    await event.edit(text, buttons=buttons)
 
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_help"))
 async def cb_admin_help(event):
-    try:
-        await event.edit("Gunakan tombol menu untuk navigasi.", buttons=[[Button.inline("⬅️ Kembali", b"menu_admin_dashboard")]])
-    except errors.MessageNotModifiedError: pass
+    if event.sender_id != ADMIN_ID: return
+    text = (
+        "ℹ️ **PANDUAN ADMIN**\n\n"
+        "• **Free Trial**: Mengaktifkan mode trial otomatis untuk user baru.\n"
+        "• **Remote Apps**: Mengontrol aplikasi Kiosk via Firebase.\n"
+        "• **Kelola Member**: Lihat, edit, atau hapus user.\n"
+        "• **Fitur Global**: Matikan fitur tertentu untuk semua user (Maintenance).\n"
+        "• **Restart**: Mulai ulang bot jika ada update/error."
+    )
+    await event.edit(text, buttons=[[Button.inline("🔙 Kembali", b"menu_admin_dashboard")]])

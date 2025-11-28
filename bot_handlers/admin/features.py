@@ -1,7 +1,7 @@
 from telethon import events, Button
 from config import bot, ADMIN_ID
-from database import get_all_members_safe, get_member_permissions, update_member_permissions
 from state import GLOBAL_FEATURE_FLAGS, EDIT_PERMISSION_STATE, USER_PERMISSIONS
+from database import get_all_members_safe, get_member_permissions, update_member_permissions
 
 ALL_FEATURES_LIST = ["ping", "alive", "id", "botpesan", "spam", "autoreply", "setreply", "faktur"]
 
@@ -23,6 +23,7 @@ async def cb_global_fitur_menu(event):
             row = []
             
     if row: buttons.append(row)
+    # TOMBOL KEMBALI FIXED
     buttons.append([Button.inline("🔙 Kembali", b"menu_admin_dashboard")])
     await event.edit(text, buttons=buttons)
 
@@ -44,8 +45,11 @@ async def admin_fitur_menu(event):
             buttons.append([Button.inline(f"{row.get('Nama')} ({row.get('User ID')})", f"EDIT_FITUR:{row.get('User ID')}")])
     
     if not buttons: return await event.answer("❌ Tidak ada member aktif.", alert=True)
+    # TOMBOL KEMBALI FIXED
     buttons.append([Button.inline("⬅️ Kembali", b"menu_admin_dashboard")])
     await event.edit("🛠 **MANAJEMEN IZIN USER**\nPilih member:", buttons=buttons)
+
+# ... (Sisa handler EDIT_FITUR dan SAVE_FITUR tetap sama, hanya pastikan tombol kembali di SAVE juga benar)
 
 @bot.on(events.CallbackQuery(pattern=r"EDIT_FITUR:(.+)"))
 async def cb_edit_fitur(event):
