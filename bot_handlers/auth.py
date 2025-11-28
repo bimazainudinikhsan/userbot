@@ -127,12 +127,15 @@ async def auth_input_handler(event):
     if event.text.startswith("/"): return # Abaikan command
 
     state = LOGIN_STATE[user_id]
-    step = state["step"]
-    client = state["client"]
+    step = state.get("step")
+    client = state.get("client")
+
+    if not client:
+        return # Should not happen
 
     # --- LANGKAH 1: TERIMA NOMOR HP ---
     if step == "phone":
-        phone_number = event.text.strip().replace(" ", "")
+        phone_number = event.text.strip().replace(" ", "").replace("-", "")
         
         msg = await event.reply("🔄 **Memproses nomor...**\nMohon tunggu sebentar.")
         
@@ -155,41 +158,55 @@ async def auth_input_handler(event):
             
         except errors.PhoneNumberInvalidError:
             await msg.edit("❌ **Nomor HP Tidak Valid.**\nPastikan pakai kode negara (cth: +62...)", buttons=[Button.inline("Ulangi", b"start_auth_process")])
-            del LOGIN_STATE[user_id]
+            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except errors.FloodWaitError as e:
             await msg.edit(f"❌ **Terkena Limit (FloodWait)**\nTunggu {e.seconds} detik sebelum mencoba lagi.", buttons=[Button.inline("Batal", b"cancel_login")])
-            del LOGIN_STATE[user_id]
+            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except Exception as e:
             await msg.edit(f"❌ **Error:** {str(e)}", buttons=[Button.inline("Batal", b"cancel_login")])
-            print(f"Auth Error: {e}")
-            del LOGIN_STATE[user_id]
+            print(f"Auth Error (Phone): {e}")
+            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
 
     # --- LANGKAH 2: TERIMA KODE OTP ---
     elif step == "code":
-        # Hapus spasi jika user mengetik "1 2 3 4 5"
-        otp_code = event.text.replace(" ", "")
+        # Hapus spasi dan strip jika user mengetik "1 2 3 4 5" atau "1-2-3-4-5"
+        otp_code = event.text.replace(" ", "").replace("-", "").strip()
         
+        # Validasi sederhana input kode
+        if not otp_code.isdigit():
+            await event.reply("⚠️ **Format Kode Salah!**\nHarap masukkan hanya angka kode OTP.", buttons=[[Button.inline("Batal", b"cancel_login")]])
+            return
+
         msg = await event.reply("🔄 **Verifikasi Kode...**")
         
         try:
+            # Pastikan hash tersedia
+            if not state.get("phone_code_hash"):
+                await msg.edit("❌ **Sesi Error:** Phone Hash hilang. Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
+                del LOGIN_STATE[user_id]
+                return
+
             await client.sign_in(state["phone"], otp_code, phone_code_hash=state["phone_code_hash"])
             
             # Jika sukses login
-            string_session = StringSession.save(client.session)
-            ACTIVE_USERBOTS[user_id] = client # Simpan client aktif
+            # string_session = StringSession.save(client.session) # Tidak perlu save string manual jika client masih connect, tapi untuk persistence perlu.
+            # Namun Userbot biasanya jalan terus. Kalau mau save session string untuk restart, simpan ke DB.
+            # Disini kita simpan object client ke memori ACTIVE_USERBOTS
+            
+            ACTIVE_USERBOTS[user_id] = client 
             
             # Hapus state login
             del LOGIN_STATE[user_id]
             
+            me = await client.get_me()
+            name = me.first_name or "User"
+            
             await msg.edit(
-                "🎉 **LOGIN BERHASIL!**\n\n"
-                "Userbot Anda sekarang aktif.\n"
+                f"🎉 **LOGIN BERHASIL!**\n\n"
+                f"Halo, **{name}**! Userbot Anda aktif.\n"
                 "Ketik `.alive` di Saved Messages untuk tes.",
                 buttons=[Button.inline("⚙️ Menu Pengaturan", b"menu_connect_ub")]
             )
-            
-            # Opsional: Simpan session ke DB disini jika mau persistent
-            # save_user_session(user_id, string_session)
 
         except errors.SessionPasswordNeededError:
             # Jika user pakai 2FA (Verifikasi 2 Langkah)
@@ -202,16 +219,17 @@ async def auth_input_handler(event):
             )
             
         except errors.PhoneCodeInvalidError:
-            await msg.edit("❌ **Kode Salah!**\nSilakan coba lagi.", buttons=[Button.inline("Coba Lagi", b"retry_code")])
+            await msg.edit("❌ **Kode Salah!**\nSilakan coba lagi.", buttons=[[Button.inline("Coba Lagi", b"retry_code")]])
         except errors.PhoneCodeExpiredError:
-            await msg.edit("❌ **Kode Kadaluarsa.**\nMulai ulang login.", buttons=[Button.inline("Ulangi", b"start_auth_process")])
-            del LOGIN_STATE[user_id]
+            await msg.edit("❌ **Kode Kadaluarsa.**\nMulai ulang login.", buttons=[[Button.inline("Ulangi", b"start_auth_process")]])
+            if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except Exception as e:
-            await msg.edit(f"❌ Error: {e}")
+            await msg.edit(f"❌ **Error Login:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
+            print(f"Auth Error (Code): {e}")
 
     # --- LANGKAH 3: TERIMA PASSWORD 2FA (JIKA ADA) ---
     elif step == "password":
-        password = event.text
+        password = event.text.strip()
         msg = await event.reply("🔄 **Verifikasi Password...**")
         
         try:
@@ -221,13 +239,16 @@ async def auth_input_handler(event):
             ACTIVE_USERBOTS[user_id] = client
             del LOGIN_STATE[user_id]
             
+            me = await client.get_me()
+            name = me.first_name or "User"
+            
             await msg.edit(
-                "🎉 **LOGIN BERHASIL (2FA)!**\n\n"
-                "Userbot Anda sekarang aktif.",
+                f"🎉 **LOGIN BERHASIL (2FA)!**\n\n"
+                f"Halo, **{name}**! Userbot Anda aktif.",
                 buttons=[Button.inline("⚙️ Menu Pengaturan", b"menu_connect_ub")]
             )
             
         except errors.PasswordHashInvalidError:
-            await msg.edit("❌ **Password Salah.**\nSilakan coba lagi.", buttons=[Button.inline("Batal", b"cancel_login")])
+            await msg.edit("❌ **Password Salah.**\nSilakan coba lagi.", buttons=[[Button.inline("Batal", b"cancel_login")]])
         except Exception as e:
-            await msg.edit(f"❌ Error: {e}")
+            await msg.edit(f"❌ **Error 2FA:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
