@@ -72,6 +72,7 @@ async def cb_start_auth(event):
         if user_id in ACTIVE_USERBOTS: del ACTIVE_USERBOTS[user_id]
 
     # Inisialisasi Client Baru untuk Login
+    # Gunakan session baru setiap kali login ulang untuk menghindari konflik
     new_client = TelegramClient(StringSession(), API_ID, API_HASH)
     await new_client.connect()
     
@@ -81,6 +82,8 @@ async def cb_start_auth(event):
         "phone": None,
         "phone_code_hash": None # Inisialisasi key ini dengan None
     }
+    
+    print(f"[AUTH] User {user_id} memulai proses login.")
     
     await event.edit(
         "📱 **LOGIN USERBOT**\n\n"
@@ -110,6 +113,7 @@ async def cb_cancel_login(event):
         try: await LOGIN_STATE[user_id]["client"].disconnect()
         except: pass
         del LOGIN_STATE[user_id]
+        print(f"[AUTH] User {user_id} membatalkan login.")
     
     await cb_connect_ub_menu(event)
 
@@ -131,7 +135,9 @@ async def auth_input_handler(event):
     client = state.get("client")
 
     if not client:
-        return # Should not happen
+        print(f"[AUTH] Client object missing for user {user_id}")
+        del LOGIN_STATE[user_id]
+        return 
 
     # --- LANGKAH 1: TERIMA NOMOR HP ---
     if step == "phone":
@@ -149,6 +155,8 @@ async def auth_input_handler(event):
             state["phone_code_hash"] = send_code.phone_code_hash 
             state["step"] = "code" # Pindah ke langkah berikutnya
             
+            print(f"[AUTH] Kode terkirim ke {phone_number}. Hash: {send_code.phone_code_hash[:10]}...")
+            
             await msg.edit(
                 f"✅ **Kode Terkirim!**\n\n"
                 f"Kode OTP telah dikirim ke akun Telegram nomor `{phone_number}`.\n\n"
@@ -165,7 +173,7 @@ async def auth_input_handler(event):
             if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except Exception as e:
             await msg.edit(f"❌ **Error:** {str(e)}", buttons=[Button.inline("Batal", b"cancel_login")])
-            print(f"Auth Error (Phone): {e}")
+            print(f"[AUTH ERROR] Phone Step: {e}")
             if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
 
     # --- LANGKAH 2: TERIMA KODE OTP ---
@@ -184,15 +192,19 @@ async def auth_input_handler(event):
             # PENTING: Ambil hash dengan key yang sama persis "phone_code_hash"
             # Menggunakan .get() untuk menghindari KeyError jika key tidak ada
             hash_code = state.get("phone_code_hash")
+            phone_num = state.get("phone")
             
-            # Pastikan hash tersedia
-            if not hash_code:
-                await msg.edit("❌ **Sesi Error:** Phone Hash hilang. Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
+            # Pastikan hash tersedia dan valid
+            if not hash_code or not phone_num:
+                print(f"[AUTH ERROR] Hash hilang untuk user {user_id}. Data: {state}")
+                await msg.edit("❌ **Sesi Error:** Data verifikasi hilang. Silakan Login ulang.", buttons=[[Button.inline("Login Ulang", b"start_auth_process")]])
                 del LOGIN_STATE[user_id]
                 return
 
+            print(f"[AUTH] Verifikasi kode {otp_code} untuk {phone_num} dengan hash {hash_code[:10]}...")
+
             # Gunakan parameter yang benar: phone_code_hash
-            await client.sign_in(state["phone"], otp_code, phone_code_hash=hash_code)
+            await client.sign_in(phone_num, otp_code, phone_code_hash=hash_code)
             
             # Jika sukses login
             # Simpan object client ke memori ACTIVE_USERBOTS
@@ -200,6 +212,7 @@ async def auth_input_handler(event):
             
             # Hapus state login
             del LOGIN_STATE[user_id]
+            print(f"[AUTH] Login SUKSES untuk user {user_id}")
             
             me = await client.get_me()
             name = me.first_name or "User"
@@ -214,6 +227,7 @@ async def auth_input_handler(event):
         except errors.SessionPasswordNeededError:
             # Jika user pakai 2FA (Verifikasi 2 Langkah)
             state["step"] = "password"
+            print(f"[AUTH] Butuh 2FA untuk user {user_id}")
             await msg.edit(
                 "🔐 **Butuh Password 2FA**\n\n"
                 "Akun ini dilindungi verifikasi 2 langkah.\n"
@@ -228,7 +242,7 @@ async def auth_input_handler(event):
             if user_id in LOGIN_STATE: del LOGIN_STATE[user_id]
         except Exception as e:
             await msg.edit(f"❌ **Error Login:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
-            print(f"Auth Error (Code): {e}")
+            print(f"[AUTH ERROR] Code Step: {e}")
 
     # --- LANGKAH 3: TERIMA PASSWORD 2FA (JIKA ADA) ---
     elif step == "password":
@@ -241,6 +255,7 @@ async def auth_input_handler(event):
             # Login Sukses
             ACTIVE_USERBOTS[user_id] = client
             del LOGIN_STATE[user_id]
+            print(f"[AUTH] Login 2FA SUKSES untuk user {user_id}")
             
             me = await client.get_me()
             name = me.first_name or "User"
@@ -255,3 +270,4 @@ async def auth_input_handler(event):
             await msg.edit("❌ **Password Salah.**\nSilakan coba lagi.", buttons=[[Button.inline("Batal", b"cancel_login")]])
         except Exception as e:
             await msg.edit(f"❌ **Error 2FA:** {str(e)}", buttons=[[Button.inline("Batal", b"cancel_login")]])
+            print(f"[AUTH ERROR] 2FA Step: {e}")
