@@ -6,7 +6,7 @@ from telethon import events, Button, TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import MessageNotModifiedError
 from config import bot, API_ID, API_HASH
-from database import find_member_row
+from database import find_member_row, get_all_members_safe
 from state import ACTIVE_USERBOTS, LOGIN_STATE
 from modules.autoreply import get_user_settings
 
@@ -32,16 +32,19 @@ async def cb_connect_ub_menu(event):
         except:
             ping_ms = "Timeout"
             
+    banner = "🟥 **Hubungkan ke Userbot**" if ub_status.startswith("🔴") else "🟩 **Userbot Terhubung**"
     text = (
         f"⚙️ **SETTING & KONEKSI**\n\n"
+        f"{banner}\n"
         f"📡 **Status Userbot:** {ub_status}\n"
         f"📶 **Ping:** `{ping_ms}`\n"
         f"🤖 **Auto Reply:** {ar_status}\n\n"
-        f"👇 Pilih tindakan:"
     )
+        # Tidak menampilkan informasi userbot member di UI pengguna
+    text += "�👇 Pilih tindakan:"
     
     buttons = [
-        [Button.inline("🔌 Login / Ganti Akun", b"start_auth_process")],
+        [Button.inline("🔌 Hubungkan ke Userbot", b"start_auth_process")],
         [Button.inline("🔄 Cek Koneksi Sekarang", b"menu_connect_ub")],
         [Button.inline("⬅️ Menu Utama", b"menu_start")]
     ]

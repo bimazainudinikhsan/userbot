@@ -8,7 +8,6 @@ ALL_FEATURES_LIST = [
     "alive",          # .alive - Cek status bot
     "help",           # .help - Menu bantuan
     "spam",           # .spam - Spam pesan
-    "autoreply",      # Auto Reply - Balas pesan otomatis
     "faktur",         # .faktur - Buat faktur/invoice
     "unread",         # .replyunread - Balas pesan unread
     "spambot",        # .spambot - Spam bot biasa
@@ -22,7 +21,6 @@ FEATURE_LABELS = {
     "alive": "⚡ Alive",
     "help": "📜 Help",
     "spam": "💥 Spam",
-    "autoreply": "💬 Auto Reply",
     "faktur": "📑 Faktur",
     "unread": "👻 Unread",
     "spambot": "🤖 SpamBot",

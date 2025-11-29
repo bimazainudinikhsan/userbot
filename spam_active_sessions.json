@@ -1,1 +1,12 @@
-{}
+{
+  "ai": {
+    "8094929215": {
+      "target": "covacpvaa",
+      "current": 3,
+      "total": 3,
+      "min": 5.0,
+      "max": 10.0,
+      "seed": false
+    }
+  }
+}

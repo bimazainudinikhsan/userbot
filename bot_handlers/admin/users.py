@@ -2,8 +2,12 @@ from telethon import events, Button
 from config import bot, ADMIN_ID
 from database import (
     find_member_row, get_all_members_safe, update_member_name_email, 
-    delete_member, update_member_status
+    delete_member, update_member_status, delete_history_by_user
 )
+from firebase_manager import clear_session_lock
+import os, json
+from datetime import datetime
+from state import ACTIVE_USERBOTS, ADMIN_ACTION_STATE, awaiting_reject_comment, pending_tx, user_tx_map, awaiting_photo, WAIT_NAME, WAIT_EMAIL, WAIT_PAYMENT_PROOF
 from state import ACTIVE_USERBOTS, ADMIN_ACTION_STATE, awaiting_reject_comment, pending_tx
 
 # Helper pagination
@@ -169,13 +173,112 @@ async def cb_confirm_delete(event):
     if event.sender_id != ADMIN_ID: return
     user_id = event.data.decode().split(":")[1]
     idx, row = find_member_row(user_id)
-    if idx:
-        delete_member(idx)
+    if not idx:
+        return await event.edit(f"❌ User `{user_id}` tidak ditemukan.", buttons=[[Button.inline("🔙 List", b"cmd_admin_status")]])
+
+    # 1) Disconnect userbot jika aktif
+    try:
         if int(user_id) in ACTIVE_USERBOTS:
-            try: await ACTIVE_USERBOTS[int(user_id)].disconnect()
-            except: pass
-            del ACTIVE_USERBOTS[int(user_id)]
-        await event.edit(f"✅ User `{user_id}` dihapus.", buttons=[[Button.inline("🔙 List", b"cmd_admin_status")]])
+            try:
+                await ACTIVE_USERBOTS[int(user_id)].disconnect()
+            except:
+                pass
+            try:
+                del ACTIVE_USERBOTS[int(user_id)]
+            except:
+                pass
+    except:
+        pass
+
+    # 2) Hapus sesi lokal & meta
+    try:
+        sp = f"botsession/{user_id}.session"
+        if os.path.exists(sp):
+            try:
+                os.remove(sp)
+            except:
+                pass
+        mp = os.path.join("user_session_meta", f"{user_id}.json")
+        if os.path.exists(mp):
+            try:
+                os.remove(mp)
+            except:
+                pass
+    except:
+        pass
+
+    # 3) Clear remote session lock
+    try:
+        clear_session_lock(user_id)
+    except:
+        pass
+
+    # 4) Hapus data di Google Sheets: Member + History
+    ok_member = delete_member(user_id)
+    ok_hist = delete_history_by_user(user_id)
+
+    # 5) Bersihkan state transaksi/queue
+    try:
+        # pending_tx entries
+        to_del = [k for k,v in pending_tx.items() if str(v.get("user_id")) == str(user_id)]
+        for k in to_del:
+            try:
+                del pending_tx[k]
+            except:
+                pass
+        # user_tx_map
+        try:
+            if user_id in user_tx_map:
+                del user_tx_map[user_id]
+        except:
+            pass
+        # awaiting_photo
+        try:
+            if int(user_id) in awaiting_photo:
+                awaiting_photo.discard(int(user_id))
+        except:
+            pass
+        # WAIT_* buffers
+        for buf in (WAIT_NAME, WAIT_EMAIL, WAIT_PAYMENT_PROOF):
+            try:
+                if user_id in buf:
+                    del buf[user_id]
+            except:
+                pass
+    except:
+        pass
+
+    # 6) Audit log
+    try:
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "kind": "admin_delete_member",
+            "user_id": str(user_id),
+            "ok_member": ok_member,
+            "ok_history": ok_hist
+        }
+        with open("session_usage.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except:
+        pass
+
+    # 7) Integritas: cek residual
+    residual = []
+    try:
+        if int(user_id) in ACTIVE_USERBOTS:
+            residual.append("active_userbot")
+        if os.path.exists(f"botsession/{user_id}.session"):
+            residual.append("local_session")
+        if os.path.exists(os.path.join("user_session_meta", f"{user_id}.json")):
+            residual.append("local_meta")
+        idx2, _ = find_member_row(user_id)
+        if idx2:
+            residual.append("sheet_member")
+    except:
+        pass
+
+    msg = "✅ User dihapus tuntas." if not residual else f"⚠️ Selesai dengan residu: {', '.join(residual)}"
+    await event.edit(msg, buttons=[[Button.inline("🔙 List", b"cmd_admin_status")]])
 
 @bot.on(events.CallbackQuery(pattern=r"ADM_(MSG|EDIT):(.+)"))
 async def cb_admin_input_mode(event):

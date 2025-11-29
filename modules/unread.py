@@ -70,7 +70,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
     async def set_unread_handler(event):
         me = await client.get_me()
         if event.sender_id != me.id: return
-        if not is_allowed("autoreply"): return await event.edit("🔒 Fitur dikunci Admin.")
+        if not is_allowed("unread"): return await event.edit("🔒 Fitur dikunci Admin.")
 
         message = event.pattern_match.group(1).strip()
         save_user_message(user_id, message)

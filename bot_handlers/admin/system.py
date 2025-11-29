@@ -17,23 +17,96 @@ async def execute_restart_sequence(trigger_event=None):
         status_msg = await bot.send_message(ADMIN_ID, "🔄 **AUTO UPDATE DETECTED**\n\nMengirim notifikasi...")
 
     members = get_all_members_safe()
-    now_str = datetime.now().strftime("%H:%M WIB")
+    now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
+    mc = read_manager_control()
+    mc["system_status"] = "maintenance"
+    mc["restart_started_at"] = datetime.now().isoformat()
+    write_manager_control(mc)
+    _log_audit("restart_start", {"at": mc["restart_started_at"]})
     
     # Broadcast Kilat
     for row in members:
         try:
             uid = str(row.get("User ID"))
             if uid.isdigit() and int(uid) != ADMIN_ID:
-                await bot.send_message(int(uid), f"⚠️ **SYSTEM RESTART**\nBot sedang restart untuk pembaruan.\n🕒 {now_str}")
+                await bot.send_message(int(uid), f"⚠️ **PENGUMUMAN SISTEM**\nSistem sedang melakukan pembaruan pada {now_str}. Mohon tunggu beberapa saat hingga bot kembali normal.\nEstimasi: 1–3 menit")
         except: pass
     
-    if status_msg: await status_msg.edit("🔄 **Rebooting Server...**")
+    if status_msg: await status_msg.edit("🔄 Rebooting Server…")
 
     # Flag untuk pesan sukses setelah nyala kembali
     with open("RESTART_FLAG.json", "w") as f: 
-        json.dump({"chat_id": target_chat_id, "admin_id": ADMIN_ID}, f)
+        json.dump({"chat_id": target_chat_id, "admin_id": ADMIN_ID, "started_at": mc["restart_started_at"]}, f)
         
     os.execl(sys.executable, sys.executable, *sys.argv)
+
+def _log_audit(kind, payload):
+    try:
+        entry = {"ts": datetime.now().isoformat(), "kind": kind}
+        entry.update(payload or {})
+        with open("session_usage.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except:
+        pass
+
+def read_manager_control():
+    try:
+        with open("manager_control.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def write_manager_control(data):
+    try:
+        with open("manager_control.json", "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        return True
+    except:
+        return False
+
+async def execute_force_regenerate_manager_session(trigger_event=None):
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    session_path = "bot_session.session"
+    backup_path = f"{session_path}.bak-{ts}"
+    try:
+        backup_path = backup_and_remove_session(session_path, backup_path)
+        _log_audit("manager_force_regen", {"by": ADMIN_ID, "backup": backup_path or "None"})
+        if trigger_event:
+            try:
+                await trigger_event.answer("🔄 Memulai restart untuk regen session...", alert=True)
+            except:
+                pass
+        await execute_restart_sequence(trigger_event)
+    except Exception as e:
+        if trigger_event:
+            try:
+                await trigger_event.answer(f"❌ Gagal: {e}", alert=True)
+            except:
+                pass
+        _log_audit("manager_force_regen_error", {"error": str(e)})
+
+def backup_and_remove_session(session_path, backup_path):
+    try:
+        if os.path.exists(session_path):
+            try:
+                os.rename(session_path, backup_path)
+            except:
+                backup_path = None
+            try:
+                os.remove(session_path)
+            except:
+                pass
+            if os.path.exists(session_path):
+                try:
+                    import shutil
+                    if backup_path:
+                        shutil.copyfile(session_path, backup_path)
+                    os.remove(session_path)
+                except:
+                    pass
+        return backup_path
+    except:
+        return None
 
 # --- Restart Trigger ---
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_restart"))
@@ -49,6 +122,32 @@ async def auto_update_watcher():
             try: os.remove(TRIGGER_PATH) 
             except: pass
             await execute_restart_sequence(trigger_event=None)
+        try:
+            mc = read_manager_control()
+            if mc.get("system_status") == "maintenance":
+                start = mc.get("restart_started_at") or mc.get("shutdown_started_at")
+                last_n = mc.get("last_maintenance_notify")
+                if start:
+                    try:
+                        from datetime import datetime
+                        elapsed = (datetime.now() - datetime.fromisoformat(start)).total_seconds()
+                    except:
+                        elapsed = 0
+                    if elapsed > 300:
+                        if not last_n or (datetime.now() - datetime.fromisoformat(last_n)).total_seconds() > 300:
+                            members = get_all_members_safe()
+                            now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
+                            for row in members:
+                                try:
+                                    uid = str(row.get("User ID"))
+                                    if uid.isdigit() and int(uid) != ADMIN_ID:
+                                        await bot.send_message(int(uid), f"ℹ️ Pembaruan masih berlangsung sejak {now_str}. Mohon tunggu, proses memakan waktu lebih lama dari perkiraan.")
+                                except:
+                                    pass
+                            mc["last_maintenance_notify"] = datetime.now().isoformat()
+                            write_manager_control(mc)
+        except:
+            pass
         await asyncio.sleep(5) 
 
 try:
@@ -65,11 +164,25 @@ async def cb_shutdown_confirm(event):
 @bot.on(events.CallbackQuery(pattern=b"confirm_shutdown"))
 async def cb_shutdown_execute(event):
     if event.sender_id != ADMIN_ID: return
-    await event.edit("🔴 **Bot Offline.**")
+    await event.edit("🔴 Bot Offline.")
+    now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
+    mc = read_manager_control()
+    mc["system_status"] = "maintenance"
+    mc["shutdown_started_at"] = datetime.now().isoformat()
+    write_manager_control(mc)
+    _log_audit("shutdown_start", {"at": mc["shutdown_started_at"]})
+    members = get_all_members_safe()
+    for row in members:
+        try:
+            uid = str(row.get("User ID"))
+            if uid.isdigit() and int(uid) != ADMIN_ID:
+                await bot.send_message(int(uid), f"🔴 **PENGUMUMAN SISTEM**\nSistem sedang melakukan pembaruan pada {now_str}. Mohon tunggu beberapa saat hingga bot kembali normal.")
+        except:
+            pass
     
     for uid, client in list(ACTIVE_USERBOTS.items()):
         try: await client.disconnect()
         except: pass
     try: await bot.disconnect()
     except: pass
-    sys.exit(0)
+    return

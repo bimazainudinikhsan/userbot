@@ -129,6 +129,48 @@ def remote_device_action(app_name, device_id, action):
         return False
 
 # ==========================================
+# 2b. SESSION LOCK PER USER (UNTUK TELEGRAM USERBOT)
+# ==========================================
+
+def get_session_lock(user_id):
+    try:
+        ref = db.reference(f'session_locks/{user_id}')
+        return ref.get() or {}
+    except Exception as e:
+        print(f"❌ Error get_session_lock: {e}")
+        return {}
+
+def set_session_lock(user_id, ip, host, note=""):
+    try:
+        ref = db.reference(f'session_locks/{user_id}')
+        payload = {
+            'ip': str(ip),
+            'host': str(host),
+            'ts': int(time.time()),
+            'note': str(note)
+        }
+        ref.set(payload)
+        return True
+    except Exception as e:
+        print(f"❌ Error set_session_lock: {e}")
+        return False
+
+def clear_session_lock(user_id):
+    try:
+        db.reference(f'session_locks/{user_id}').delete()
+        return True
+    except Exception as e:
+        print(f"❌ Error clear_session_lock: {e}")
+        return False
+
+def should_block_by_lock(lock_obj, current_ip):
+    try:
+        ip = str(lock_obj.get('ip', '')).strip()
+        return bool(ip) and ip != str(current_ip)
+    except:
+        return False
+
+# ==========================================
 # 3. FUNGSI USER MANAGER (YANG LAMA)
 # ==========================================
 

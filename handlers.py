@@ -11,6 +11,7 @@ from telethon.errors import SessionPasswordNeededError
 
 # Import Module Lokal
 from config import bot, API_ID, API_HASH, ADMIN_ID, PRICE_PER_MONTH, format_rp
+from bot_handlers.admin.system import read_manager_control, write_manager_control
 from database import (
     find_member_row, append_member, update_member_expire, 
     update_member_name_email, save_session_to_sheet, log_history,
@@ -60,13 +61,33 @@ async def cb_back_main(event):
             ]
         )
 
+@bot.on(events.CallbackQuery(pattern=b"menu_admin_dashboard"))
+async def cb_open_admin_dashboard(event):
+    await show_admin_dashboard(event)
+
 # ==========================================
 # 2. ADMIN DASHBOARD & LOGIC
 # ==========================================
 
 async def show_admin_dashboard(event):
+    try:
+        if event.sender_id != ADMIN_ID:
+            try:
+                await event.answer("❌ Akses ditolak: bukan admin", alert=True)
+            except:
+                pass
+            try:
+                with open("session_usage.log", "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"ts": datetime.now().isoformat(), "kind": "admin_dashboard_unauthorized", "by": event.sender_id}) + "\n")
+            except:
+                pass
+            return
+    except:
+        pass
     is_trial_on = GLOBAL_CONFIG.get("free_trial", False)
     status_trial = "✅ ON" if is_trial_on else "❌ OFF"
+    sys_status = read_manager_control().get("system_status", "normal")
+    sys_label = "🟢 Normal" if sys_status == "normal" else "🟡 Maintenance"
     
     text = (
         "👑 **ADMIN DASHBOARD**\n"
@@ -74,17 +95,29 @@ async def show_admin_dashboard(event):
     )
     buttons = [
         [Button.inline(f"🆓 Mode Free Trial: {status_trial}", b"TOGGLE_TRIAL")],
+        [Button.inline(f"🧰 Status Sistem: {sys_label}", b"cmd_admin_sys_status")],
         [Button.inline("🛠 Atur Fitur Member", b"cmd_admin_fitur")],
         [Button.inline("📊 Cek Status Semua User", b"cmd_admin_status")],
         [Button.inline("ℹ️ Bantuan & Perintah", b"cmd_admin_help")],
-        [Button.inline("🔄 Restart System", b"cmd_admin_restart")]
+        [Button.inline("🔄 Restart System", b"cmd_admin_restart"), Button.inline("🔴 Shutdown", b"cmd_admin_shutdown")]
     ]
     
-    if isinstance(event, events.CallbackQuery.Event):
-        await event.edit(text, buttons=buttons)
-    # Jika event adalah NewMessage (ketik /start), kita balas dengan pesan baru
-    else:
-        await event.respond(text, buttons=buttons)
+    try:
+        if isinstance(event, events.CallbackQuery.Event):
+            await event.edit(text, buttons=buttons)
+        else:
+            await event.respond(text, buttons=buttons)
+        try:
+            with open("session_usage.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": datetime.now().isoformat(), "kind": "admin_dashboard_open", "by": event.sender_id}) + "\n")
+        except:
+            pass
+    except Exception as e:
+        try:
+            with open("session_usage.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": datetime.now().isoformat(), "kind": "admin_dashboard_error", "error": str(e)}) + "\n")
+        except:
+            pass
 
 # --- Toggle Trial ---
 @bot.on(events.CallbackQuery(pattern=b"TOGGLE_TRIAL"))
@@ -214,6 +247,45 @@ async def cb_admin_status_btn(event):
     if len(full_text) > 4000: full_text = full_text[:4000] + "..."
     await event.edit(full_text, buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]])
 
+@bot.on(events.CallbackQuery(pattern=b"cmd_admin_sys_status"))
+async def cb_admin_sys_status(event):
+    if event.sender_id != ADMIN_ID: return
+    mc = read_manager_control()
+    status = mc.get("system_status", "normal")
+    started = mc.get("restart_started_at") or mc.get("shutdown_started_at")
+    last = mc.get("last_restart") or {}
+    text = "🧰 Status Sistem\n\n"
+    text += f"Status: {'🟢 Normal' if status=='normal' else '🟡 Maintenance'}\n"
+    if started:
+        text += f"Mulai: {started}\n"
+    if last:
+        text += f"Restart terakhir: mulai {last.get('started_at','-')} selesai {last.get('completed_at','-')} durasi {last.get('duration_sec',0)} dtk\n"
+    btns = []
+    if status == "normal":
+        btns.append([Button.inline("Set Maintenance", b"SET_SYS_MAINT")])
+    else:
+        btns.append([Button.inline("Set Normal", b"SET_SYS_NORMAL")])
+    btns.append([Button.inline("⬅️ Kembali", b"menu_start")])
+    await event.edit(text, buttons=btns)
+
+@bot.on(events.CallbackQuery(pattern=b"SET_SYS_MAINT"))
+async def cb_set_maint(event):
+    if event.sender_id != ADMIN_ID: return
+    mc = read_manager_control()
+    mc["system_status"] = "maintenance"
+    mc["manual_set_at"] = datetime.now().isoformat()
+    write_manager_control(mc)
+    await cb_admin_sys_status(event)
+
+@bot.on(events.CallbackQuery(pattern=b"SET_SYS_NORMAL"))
+async def cb_set_normal(event):
+    if event.sender_id != ADMIN_ID: return
+    mc = read_manager_control()
+    mc["system_status"] = "normal"
+    mc["manual_set_at"] = datetime.now().isoformat()
+    write_manager_control(mc)
+    await cb_admin_sys_status(event)
+
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_help"))
 async def cb_admin_help(event):
     await event.edit("Gunakan tombol menu untuk navigasi.", buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]])
@@ -240,7 +312,9 @@ async def cb_status(event):
     expired = row.get("Expired", "-")
     status = row.get("Status", "-")
     ub_status = "🟢 Online" if user_id in ACTIVE_USERBOTS else "🔴 Offline"
-    await event.edit(f"📊 Status Member\n\nID: `{user_id}`\nStatus: {status}\nUserbot: {ub_status}\nExpired: {expired}", buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]])
+    sys_status = read_manager_control().get("system_status", "normal")
+    sys_label = "🟢 Normal" if sys_status == "normal" else "🟡 Maintenance"
+    await event.edit(f"📊 Status Member\n\nID: `{user_id}`\nStatus: {status}\nUserbot: {ub_status}\nExpired: {expired}\nSistem: {sys_label}", buttons=[[Button.inline("⬅️ Kembali", b"menu_start")]])
 
 @bot.on(events.CallbackQuery(pattern=b"menu_connect_ub"))
 async def cb_connect_ub(event):

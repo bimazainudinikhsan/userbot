@@ -1,6 +1,7 @@
 import os
 import sys
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -45,7 +46,38 @@ else:
     print("⚠️ To enable Google Sheets, add your credentials.json file")
 
 # Init Bot Manager Client
-bot = TelegramClient("bot_session", API_ID, API_HASH)
+def _init_bot_client():
+    if os.getenv("DISABLE_TELEGRAM_CLIENT") == "1":
+        return None
+    session_name = "bot_session"
+    session_file = f"{session_name}.session"
+    try:
+        return TelegramClient(session_name, API_ID, API_HASH)
+    except Exception as e:
+        try:
+            from sqlite3 import DatabaseError
+            is_db_err = isinstance(e, DatabaseError) or ("file is not a database" in str(e))
+        except:
+            is_db_err = ("file is not a database" in str(e))
+        if is_db_err:
+            try:
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+            except Exception as e2:
+                print(f"⚠️ Cannot remove invalid session file: {e2}")
+            try:
+                return TelegramClient(session_name, API_ID, API_HASH)
+            except Exception:
+                try:
+                    return TelegramClient(StringSession(), API_ID, API_HASH)
+                except Exception as e4:
+                    print(f"❌ Failed to create fresh session: {e4}")
+                    return None
+        else:
+            print(f"❌ Failed to init bot client: {e}")
+            return None
+
+bot = _init_bot_client()
 
 # Helper Format Rupiah
 def format_rp(n):

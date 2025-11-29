@@ -1,11 +1,44 @@
 # bmcodexbot/database.py
 import os
+import time
 from datetime import datetime, timedelta
 from config import spreadsheet
 
 # Setup Worksheets
 member_sheet = None
 history_sheet = None
+_CACHE_MEMBERS = {"data": None, "ts": 0}
+_CACHE_TTL_SEC = 30
+
+def _db_log(kind, payload=None):
+    try:
+        entry = {"ts": datetime.now().isoformat(), "kind": kind}
+        if payload:
+            entry.update(payload)
+        with open("db_usage.log", "a", encoding="utf-8") as f:
+            f.write(__import__("json").dumps(entry) + "\n")
+    except:
+        pass
+
+def _cache_get_members():
+    try:
+        now = time.time()
+        if _CACHE_MEMBERS["data"] is not None and (now - _CACHE_MEMBERS["ts"]) < _CACHE_TTL_SEC:
+            return _CACHE_MEMBERS["data"]
+    except:
+        pass
+    return None
+
+def _cache_set_members(data):
+    try:
+        _CACHE_MEMBERS["data"] = data
+        _CACHE_MEMBERS["ts"] = time.time()
+    except:
+        pass
+
+def _cache_invalidate_members():
+    _CACHE_MEMBERS["data"] = None
+    _CACHE_MEMBERS["ts"] = 0
 
 def ensure_sheets():
     global member_sheet, history_sheet
@@ -57,7 +90,13 @@ def get_all_members_safe():
     if member_sheet is None:
         return []
     try:
-        return member_sheet.get_all_records()
+        cached = _cache_get_members()
+        if cached is not None:
+            return cached
+        data = member_sheet.get_all_records()
+        _cache_set_members(data)
+        _db_log("read_members", {"count": len(data)})
+        return data
     except Exception as e:
         print(f"Gagal mengambil record: {e}")
         return []
@@ -107,14 +146,50 @@ def update_member_data(user_id, key, value):
             # Handle list permissions agar disimpan sebagai string koma
             if key == "Permissions" and isinstance(value, list):
                 value = ",".join(value)
-                
+            if not _validate_value(key, value):
+                _db_log("validate_fail", {"user_id": str(user_id), "key": key, "value": str(value)})
+                return False
             member_sheet.update_cell(idx, col_idx, value)
             print(f"✅ DB Update: Row {idx}, Col {col_idx} ({key}) -> {value}")
+            _cache_invalidate_members()
+            _db_log("update_member", {"user_id": str(user_id), "key": key})
             return True
         except Exception as e:
             print(f"❌ Gagal update member data: {e}")
             return False
     return False
+
+def _validate_value(key, value):
+    try:
+        if key == "User ID":
+            s = str(value)
+            return s.isdigit()
+        if key == "Nama":
+            return isinstance(value, str) and len(value) <= 100
+        if key == "Email":
+            v = str(value)
+            return v == "-" or ("@" in v and len(v) <= 100)
+        if key == "Status":
+            return str(value) in ["Approved", "Pending", "Rejected"]
+        if key == "Expired":
+            try:
+                datetime.strptime(str(value), "%d-%m-%Y")
+                return True
+            except:
+                return False
+        if key == "Join Time":
+            return isinstance(value, str) and len(value) <= 30
+        if key == "Session String":
+            return isinstance(value, str) and len(value) <= 4096
+        if key == "Permissions":
+            if isinstance(value, list):
+                return all(isinstance(x, str) and len(x) <= 50 for x in value)
+            if isinstance(value, str):
+                return len(value) <= 200
+            return False
+        return True
+    except:
+        return False
 
 # ==========================================
 # WRAPPER FUNCTIONS (UNTUK KOMPATIBILITAS)
@@ -127,7 +202,11 @@ def update_member_expire(row_idx, new_expire_str):
     # Kita cek tipe datanya
     try:
         if isinstance(row_idx, int) and row_idx < 10000: # Asumsi ID row sheet kecil
+            if not _validate_value("Expired", new_expire_str):
+                return False
             member_sheet.update_cell(row_idx, 5, new_expire_str)
+            _cache_invalidate_members()
+            _db_log("update_expire_row", {"row": row_idx})
             return True
         else:
             return update_member_data(row_idx, "Expired", new_expire_str)
@@ -141,7 +220,11 @@ def update_member_status(user_id_or_row, new_status, reason=""):
         return False
     try:
         if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
+            if not _validate_value("Status", new_status):
+                return False
             member_sheet.update_cell(user_id_or_row, 4, new_status)
+            _cache_invalidate_members()
+            _db_log("update_status_row", {"row": user_id_or_row})
             return True
         else:
             return update_member_data(user_id_or_row, "Status", new_status)
@@ -155,8 +238,14 @@ def update_member_name_email(user_id_or_row, name, email):
         return False
     try:
         if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
+            if not _validate_value("Nama", name):
+                return False
+            if not _validate_value("Email", email):
+                return False
             member_sheet.update_cell(user_id_or_row, 2, name)
             member_sheet.update_cell(user_id_or_row, 3, email)
+            _cache_invalidate_members()
+            _db_log("update_name_email_row", {"row": user_id_or_row})
             return True
         else:
             result1 = update_member_data(user_id_or_row, "Nama", name)
@@ -206,8 +295,11 @@ def append_member(user_id, name="-", email="-", months=0):
         
         # Default Permissions: ALL
         row_data = [str(user_id), name, email, "Pending", expire, join_time, "", "ALL"]
-        
+        if not (_validate_value("User ID", row_data[0]) and _validate_value("Nama", row_data[1]) and _validate_value("Email", row_data[2]) and _validate_value("Status", row_data[3]) and _validate_value("Expired", row_data[4])):
+            return expire
         member_sheet.append_row(row_data)
+        _cache_invalidate_members()
+        _db_log("append_member", {"user_id": str(user_id)})
         return expire
     except Exception as e:
         print(f"❌ Failed to append member: {e}")
@@ -227,6 +319,8 @@ def delete_member(user_id):
         try:
             member_sheet.delete_rows(idx)
             print(f"🗑️ Database: Menghapus baris {idx}")
+            _cache_invalidate_members()
+            _db_log("delete_member_row", {"user_id": str(user_id), "row": idx})
             return True
         except Exception as e:
             print(f"❌ Gagal hapus member: {e}")
@@ -242,4 +336,39 @@ def log_history(user_id, months, total, status):
         return False
     ts = datetime.now().strftime("%d-%m-%Y %H:%M")
     history_sheet.append_row([str(user_id), str(months), str(total), status, ts])
+    _db_log("log_history", {"user_id": str(user_id), "months": months, "total": total, "status": status})
     return True
+
+def get_member_by_id(user_id):
+    try:
+        all_rows = get_all_members_safe()
+        for row in all_rows:
+            if str(row.get("User ID")) == str(user_id):
+                return row
+        return None
+    except:
+        return None
+
+def delete_history_by_user(user_id):
+    if history_sheet is None:
+        print(f"⚠️ Cannot delete history: Google Sheets not available")
+        return False
+    try:
+        values = history_sheet.get_all_values()
+        rows_to_delete = []
+        for idx, row in enumerate(values[1:], start=2):
+            try:
+                if str(row[0]) == str(user_id):
+                    rows_to_delete.append(idx)
+            except:
+                pass
+        for r in sorted(rows_to_delete, reverse=True):
+            try:
+                history_sheet.delete_rows(r)
+            except Exception as e:
+                print(f"❌ Gagal hapus history row {r}: {e}")
+        _db_log("delete_history", {"user_id": str(user_id), "deleted_rows": len(rows_to_delete)})
+        return True
+    except Exception as e:
+        print(f"❌ Gagal baca history: {e}")
+        return False

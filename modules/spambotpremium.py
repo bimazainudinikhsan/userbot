@@ -4,12 +4,27 @@ import random
 import json
 import os
 from telethon import events, Button
+from telethon.errors import FloodWaitError, MessageNotModifiedError, ReplyMarkupInvalidError
 from config import bot, ADMIN_ID
 
 SETTINGS_FILE = "user_spambotpremium_settings.json"
 ACTIVE_PREM_TASKS = {}
 SPAM_PREM_PROGRESS = {}
 EDIT_STATE = {}
+
+# Penanganan kata-kata sensitif
+SARA_WORDS = [
+    "anjing", "babi", "bangsat", "kontol", "memek", "ngentot", "tai", "goblok",
+    "tolol", "bodoh", "idiot", "kampret", "bajingan", "keparat", "setan", "iblis",
+    "kafir", "yahudi", "nasrani", "agama", "suku", "ras", "cina", "jawa", "arab",
+    "negro", "nigga", "fuck", "shit", "bitch", "asshole", "dick", "pussy",
+    "jancok", "asu", "cuk", "jembut", "perek", "lonte", "pelacur", "sundal"
+]
+RISKY_WORDS = ["jual", "beli", "promo", "diskon", "slot", "gacor", "link", "http", "wa.me", "t.me"]
+
+def contains_sensitive(text):
+    t = (text or "").lower()
+    return any(w in t for w in SARA_WORDS) or any(w in t for w in RISKY_WORDS)
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
@@ -32,7 +47,18 @@ def get_user_settings(user_id):
     str_uid = str(user_id)
     if str_uid not in data:
         data[str_uid] = {
-            "messages": ["Halo kak, cek profil ya", "Info dong kak", "Salam kenal semuanya"],
+            "messages": [
+                "Halo kak, cek profil ya",
+                "Info dong kak",
+                "Salam kenal semuanya",
+                "Mohon izin perkenalan",
+                "Ada informasi penting",
+                "Cek channel kami ya",
+                "Terima kasih sudah hadir",
+                "Support kami ya",
+                "Semoga harimu baik",
+                "Silakan baca pinned"
+            ],
             "delay_min": 3,
             "delay_max": 5,
             "reply_to": False
@@ -67,19 +93,34 @@ async def send_progress_to_admin(user_id, target, current, total, status="runnin
     buttons = []
     if "Berjalan" in status or status == "running" or "Scraping" in status:
         buttons.append([Button.inline("🛑 STOP SPAM", f"STOP_SPAM_PREM:{user_id}")])
+    markup = buttons if buttons else None
     
     try:
         if user_id in SPAM_PREM_PROGRESS and SPAM_PREM_PROGRESS[user_id].get("msg_id"):
-            await bot.edit_message(ADMIN_ID, SPAM_PREM_PROGRESS[user_id]["msg_id"], text, buttons=buttons)
+            try:
+                await bot.edit_message(user_id, SPAM_PREM_PROGRESS[user_id]["msg_id"], text, buttons=markup)
+            except MessageNotModifiedError:
+                pass
+            except ReplyMarkupInvalidError:
+                try:
+                    await bot.edit_message(user_id, SPAM_PREM_PROGRESS[user_id]["msg_id"], text, buttons=None)
+                except Exception as e:
+                    print(f"Edit fallback failed: {e}")
         else:
-            msg = await bot.send_message(ADMIN_ID, text, buttons=buttons)
+            msg = await bot.send_message(user_id, text, buttons=markup)
             SPAM_PREM_PROGRESS[user_id] = {"msg_id": msg.id}
     except Exception as e:
         print(f"Error sending progress: {e}")
+    try:
+        with open("spam_activity.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": __import__("datetime").datetime.now().isoformat(), "kind": "prem_progress", "user_id": user_id, "target": str(target), "current": current, "total": total, "status": status}) + "\n")
+    except:
+        pass
 
 async def run_spam_prem(client, user_id, target, count, reply_msg_id=None):
     """Jalankan spam premium dengan settings user"""
     target_name = str(target)
+    print(f"[SPAM PREM] user={user_id} target={target} count={count}")
     try:
         settings = get_user_settings(user_id)
         messages = settings.get("messages", ["Halo kak"])
@@ -100,18 +141,42 @@ async def run_spam_prem(client, user_id, target, count, reply_msg_id=None):
             
             msg = random.choice(messages)
             
-            if reply_to and reply_msg_id:
-                await client.send_message(entity, msg, reply_to=reply_msg_id)
-            else:
-                await client.send_message(entity, msg)
+            try:
+                if contains_sensitive(msg):
+                    try:
+                        with open("spam_activity.log", "a", encoding="utf-8") as f:
+                            f.write(json.dumps({"ts": __import__("datetime").datetime.now().isoformat(), "kind": "prem_skip_sensitive", "user_id": user_id, "target": str(target), "msg": msg}) + "\n")
+                    except:
+                        pass
+                else:
+                    if reply_to and reply_msg_id:
+                        await client.send_message(entity, msg, reply_to=reply_msg_id)
+                    else:
+                        await client.send_message(entity, msg)
+            except FloodWaitError as e:
+                await asyncio.sleep(e.seconds + random.uniform(0.5, 1.5))
+                continue
             
-            if i % 3 == 0 or i == count - 1:
+            if i % 1 == 0 or i == count - 1:
                 await send_progress_to_admin(user_id, target_name, i + 1, count, "🔄 Berjalan...")
             
             delay = random.uniform(delay_min, delay_max)
             await asyncio.sleep(delay)
             
         await send_progress_to_admin(user_id, target_name, count, count, "✅ Selesai")
+        # Finalize: delete progress msg and notify
+        try:
+            mp = SPAM_PREM_PROGRESS.get(user_id, {})
+            mid = mp.get("msg_id")
+            if mid:
+                try:
+                    await bot.delete_messages(user_id, mid)
+                except Exception:
+                    pass
+                del SPAM_PREM_PROGRESS[user_id]
+            await bot.send_message(user_id, "✅ Proses spam selesai", buttons=[[Button.inline("⬅️ Kembali ke Menu Member", b"menu_start")]])
+        except Exception as e:
+            print(f"Finalize error: {e}")
         
     except asyncio.CancelledError:
         return
@@ -160,6 +225,8 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
         
         if not is_allowed("spambotpremium"): 
             return await event.edit("🔒 Fitur dikunci Admin.")
+        if not await check_status(client, user_id, event):
+            return
         
         await show_settings_menu(event, user_id)
 
@@ -170,10 +237,14 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
         
         if not is_allowed("spambotpremium"): 
             return await event.edit("🔒 Fitur Premium dikunci.")
+        if not await check_status(client, user_id, event):
+            return
         
         target = event.pattern_match.group(1)
         count = int(event.pattern_match.group(2))
         
+        if count < 1:
+            return await event.edit("⚠️ Jumlah minimal 1.")
         if count > 100:
             return await event.edit("⚠️ Maksimal 100 pesan per sesi.")
         
@@ -197,7 +268,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             if user_id in ACTIVE_PREM_TASKS: 
                 del ACTIVE_PREM_TASKS[user_id]
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_LIST_MSG"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_LIST_MSG"))
     async def cb_list_msg(event):
         if event.sender_id != user_id: return
         settings = get_user_settings(user_id)
@@ -220,7 +291,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
         buttons.append([Button.inline("🔙 Kembali", b"SPP_BACK")])
         await event.edit(text, buttons=buttons)
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_ADD_MSG"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_ADD_MSG"))
     async def cb_add_msg(event):
         if event.sender_id != user_id: return
         EDIT_STATE[user_id] = {"action": "add_msg"}
@@ -229,7 +300,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             buttons=[[Button.inline("❌ Batal", b"SPP_BACK")]]
         )
 
-    @client.on(events.CallbackQuery(pattern=r"SPP_EDIT:(\d+)"))
+    @bot.on(events.CallbackQuery(pattern=r"SPP_EDIT:(\d+)"))
     async def cb_edit_msg(event):
         if event.sender_id != user_id: return
         idx = int(event.data.decode().split(":")[1])
@@ -243,7 +314,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             buttons=[[Button.inline("❌ Batal", b"SPP_BACK")]]
         )
 
-    @client.on(events.CallbackQuery(pattern=r"SPP_DEL:(\d+)"))
+    @bot.on(events.CallbackQuery(pattern=r"SPP_DEL:(\d+)"))
     async def cb_del_msg(event):
         if event.sender_id != user_id: return
         idx = int(event.data.decode().split(":")[1])
@@ -252,13 +323,14 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
         messages = settings.get("messages", [])
         
         if 0 <= idx < len(messages):
-            messages.pop(idx)
-            update_user_settings(user_id, "messages", messages)
-            await event.answer("✅ Pesan dihapus!", alert=True)
-        
-        await cb_list_msg(event)
+            EDIT_STATE[user_id] = {"action": "confirm_del", "index": idx}
+            preview = messages[idx][:40] + ("..." if len(messages[idx]) > 40 else "")
+            await event.edit(
+                f"🗑 **HAPUS PESAN**\n\nApakah Anda yakin menghapus:\n`{preview}`",
+                buttons=[[Button.inline("✅ Ya", f"SPP_CONFIRM_DEL:{idx}"), Button.inline("❌ Tidak", b"SPP_BACK")]]
+            )
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_SET_DELAY"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_SET_DELAY"))
     async def cb_set_delay(event):
         if event.sender_id != user_id: return
         EDIT_STATE[user_id] = {"action": "set_delay"}
@@ -267,7 +339,7 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             buttons=[[Button.inline("❌ Batal", b"SPP_BACK")]]
         )
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_TOGGLE_REPLY"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_TOGGLE_REPLY"))
     async def cb_toggle_reply(event):
         if event.sender_id != user_id: return
         settings = get_user_settings(user_id)
@@ -276,24 +348,24 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
         await event.answer(f"Reply: {'ON' if not current else 'OFF'}", alert=True)
         await show_settings_menu(event, user_id)
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_BACK"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_BACK"))
     async def cb_back(event):
         if event.sender_id != user_id: return
         if user_id in EDIT_STATE:
             del EDIT_STATE[user_id]
         await show_settings_menu(event, user_id)
 
-    @client.on(events.CallbackQuery(pattern=b"SPP_CLOSE"))
+    @bot.on(events.CallbackQuery(pattern=b"SPP_CLOSE"))
     async def cb_close(event):
         if event.sender_id != user_id: return
         if user_id in EDIT_STATE:
             del EDIT_STATE[user_id]
         await event.delete()
 
-    @client.on(events.NewMessage(incoming=False))
+    @bot.on(events.NewMessage(incoming=True))
     async def input_listener(event):
-        if user_id not in EDIT_STATE: return
         if event.sender_id != user_id: return
+        if user_id not in EDIT_STATE: return
         
         state = EDIT_STATE.get(user_id, {})
         action = state.get("action")
@@ -324,6 +396,8 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
                 delay_max = float(parts[1])
                 if delay_min > delay_max:
                     delay_min, delay_max = delay_max, delay_min
+                if delay_min <= 0 or delay_max <= 0:
+                    raise ValueError("non-positive")
                 update_user_settings(user_id, "delay_min", delay_min)
                 update_user_settings(user_id, "delay_max", delay_max)
                 del EDIT_STATE[user_id]
@@ -331,11 +405,24 @@ async def register(client, user_id, is_allowed, check_status, help_dict):
             except:
                 await event.reply("⚠️ Format salah. Gunakan: min-max (contoh: 3-5)")
 
+    @bot.on(events.CallbackQuery(pattern=r"SPP_CONFIRM_DEL:(\d+)"))
+    async def cb_confirm_del(event):
+        if event.sender_id != user_id: return
+        idx = int(event.data.decode().split(":")[1])
+        settings = get_user_settings(user_id)
+        messages = settings.get("messages", [])
+        if 0 <= idx < len(messages):
+            messages.pop(idx)
+            update_user_settings(user_id, "messages", messages)
+            await event.answer("✅ Pesan dihapus!", alert=True)
+        await show_settings_menu(event, user_id)
+
 @bot.on(events.CallbackQuery(pattern=r"STOP_SPAM_PREM:(.+)"))
 async def stop_spam_prem(event):
-    if event.sender_id != ADMIN_ID: return
-    
+    # Izinkan Admin atau member pemilik task
     target_user = int(event.data.decode().split(":")[1])
+    if event.sender_id not in (ADMIN_ID, target_user):
+        return
     
     if target_user in ACTIVE_PREM_TASKS:
         ACTIVE_PREM_TASKS[target_user].cancel()
@@ -349,11 +436,27 @@ async def stop_spam_prem(event):
                     f"👤 User: `{target_user}`\n"
                     f"⏱ Status: ❌ Dihentikan oleh Admin"
                 )
-                await bot.edit_message(ADMIN_ID, SPAM_PREM_PROGRESS[target_user]["msg_id"], text, buttons=None)
+                try:
+                    await bot.edit_message(target_user, SPAM_PREM_PROGRESS[target_user]["msg_id"], text, buttons=None)
+                except MessageNotModifiedError:
+                    pass
+                except ReplyMarkupInvalidError:
+                    try:
+                        await bot.edit_message(target_user, SPAM_PREM_PROGRESS[target_user]["msg_id"], text)
+                    except Exception:
+                        pass
             except:
+                pass
+            try:
+                await bot.delete_messages(target_user, SPAM_PREM_PROGRESS[target_user]["msg_id"])
+            except Exception:
                 pass
             del SPAM_PREM_PROGRESS[target_user]
         
         await event.answer("✅ Spam Premium dihentikan!", alert=True)
+        try:
+            await bot.send_message(target_user, "🛑 Proses spam premium dihentikan", buttons=[[Button.inline("⬅️ Kembali ke Menu Member", b"menu_start")]])
+        except Exception:
+            pass
     else:
         await event.answer("⚠️ Task sudah selesai.", alert=True)

@@ -8,7 +8,7 @@ from database import find_member_row, get_member_permissions, update_member_stat
 from state import USER_PERMISSIONS, GLOBAL_FEATURE_FLAGS
 
 # Import Modules Baru (Tambahkan unread)
-from modules import faktur, autoreply, general, unread, auto_spam, spambot, spambotpremium, spamai
+from modules import faktur, general, unread, auto_spam, spambot, spambotpremium, spamai
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - USERBOT - %(levelname)s - %(message)s')
@@ -62,9 +62,11 @@ async def start_userbot(client, user_id):
 
         # 4. Register Modules
         await faktur.register(client, user_id, is_allowed, check_userbot_status, help_dict)
-        await autoreply.register(client, user_id, is_allowed, check_userbot_status, help_dict)
+        await auto_spam.register(client, user_id, is_allowed, check_userbot_status, help_dict)
         await general.register(client, user_id, is_allowed, check_userbot_status, help_dict)
         await spambot.register(client, user_id, is_allowed, check_userbot_status, help_dict)
+        await spambotpremium.register(client, user_id, is_allowed, check_userbot_status, help_dict)
+        await spamai.register(client, user_id, is_allowed, check_userbot_status, help_dict)
         # Register modul Unread baru
         await unread.register(client, user_id, is_allowed, check_userbot_status, help_dict)
 

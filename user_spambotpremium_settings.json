@@ -1,0 +1,19 @@
+{
+  "8094929215": {
+    "messages": [
+      "Halo kak, cek profil ya",
+      "Info dong kak",
+      "Salam kenal semuanya",
+      "Mohon izin perkenalan",
+      "Ada informasi penting",
+      "Cek channel kami ya",
+      "Terima kasih sudah hadir",
+      "Support kami ya",
+      "Semoga harimu baik",
+      "Silakan baca pinned"
+    ],
+    "delay_min": 3,
+    "delay_max": 5,
+    "reply_to": false
+  }
+}

@@ -4,5 +4,16 @@
         "message": "Halo, ini pesan otomatis.",
         "delay": 60,
         "target_type": "all"
+    },
+    "8094929215": {
+        "enabled": false,
+        "message": "asdasdasd",
+        "delay": 2,
+        "target_type": "all",
+        "messages": [
+            "haii",
+            "/start"
+        ],
+        "replied_chats": []
     }
 }
