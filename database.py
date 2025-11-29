@@ -9,6 +9,12 @@ history_sheet = None
 
 def ensure_sheets():
     global member_sheet, history_sheet
+    
+    # Skip if spreadsheet is not available
+    if spreadsheet is None:
+        print("⚠️ Skipping Google Sheets setup (no credentials)")
+        return
+    
     try:
         names = [ws.title for ws in spreadsheet.worksheets()]
         
@@ -48,6 +54,8 @@ ensure_sheets()
 # CORE READ FUNCTIONS
 # ==========================================
 def get_all_members_safe():
+    if member_sheet is None:
+        return []
     try:
         return member_sheet.get_all_records()
     except Exception as e:
