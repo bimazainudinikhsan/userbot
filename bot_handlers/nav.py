@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from telethon import events, Button
 import os, json
+import logging
 from telethon.errors import MessageNotModifiedError
 from config import bot, ADMIN_ID
 from database import (
@@ -19,7 +20,8 @@ from modules.unread import (
     get_settings as get_ur_settings, 
     update_settings as update_ur_settings,
     is_unread_mode_enabled,
-    set_unread_mode
+    set_unread_mode,
+    ACTIVE_UNREAD_TASKS
 )
 from modules.auto_spam import get_settings as get_as_settings, update_setting as update_as_setting
 
@@ -353,7 +355,7 @@ async def cb_ur(event):
     is_enabled = is_unread_mode_enabled(event.sender_id)
     
     text = (
-        "� **MODE BALAS OTOMATIS**\n\n"
+        "🔔 **MODE BALAS OTOMATIS**\n\n"
         f"Status: {'🟢 AKTIF' if is_enabled else '🔴 NONAKTIF'}\n"
         f"Pesan: `{settings.get('message', 'Belum diatur')[:50]}...`\n\n"
         "📌 **Cara Penggunaan:**\n"
@@ -488,19 +490,26 @@ async def unread_set_typing_handler(event):
 
 @bot.on(events.CallbackQuery(pattern=b"unread_start"))
 async def unread_start_handler(event):
-    settings = get_ur_settings(event.sender_id)
+    user_id = event.sender_id
+    
+    # Cek apakah userbot sudah terhubung
+    if user_id not in ACTIVE_USERBOTS:
+        await event.answer("❌ Userbot belum terhubung. Silakan hubungkan userbot terlebih dahulu.", alert=True)
+        return await cb_ur(event)
+    
+    settings = get_ur_settings(user_id)
     if not settings.get('message'):
         await event.answer("❌ Silakan atur pesan terlebih dahulu di pengaturan.", alert=True)
         return await cb_ur_s(event)
     
-    if not is_unread_mode_enabled(event.sender_id):
-        set_unread_mode(event.sender_id, True)
+    if not is_unread_mode_enabled(user_id):
+        set_unread_mode(user_id, True)
     
     await event.edit(
         "🚀 **MEMULAI BALAS PESAN**\n\n"
         "Bot akan mulai membalas pesan yang belum dibaca.\n"
         "Proses ini berjalan di latar belakang.\n\n"
-        f"🔘 Status: {'🟢 AKTIF' if is_unread_mode_enabled(event.sender_id) else '🔴 NONAKTIF'}\n"
+        f"🔘 Status: {'🟢 AKTIF' if is_unread_mode_enabled(user_id) else '🔴 NONAKTIF'}\n"
         f"⏱️ Delay: {settings.get('delay_between_chats', 5)} detik\n"
         f"⌨️ Durasi Mengetik: {settings.get('typing_duration', 3)} detik\n\n"
         f"📝 **Pesan:**\n`{settings.get('message')[:100]}...`\n\n"
@@ -514,13 +523,23 @@ async def unread_start_handler(event):
 @bot.on(events.CallbackQuery(pattern=b"confirm_unread_start"))
 async def confirm_unread_start_handler(event):
     try:
-        from modules.unread import process_unread_chats
+        import logging
         
-        # Get the original message to update it
+        user_id = event.sender_id
+        
+        # Cek apakah userbot sudah terhubung
+        if user_id not in ACTIVE_USERBOTS:
+            await event.answer("❌ Userbot belum terhubung. Silakan hubungkan userbot terlebih dahulu.", alert=True)
+            return await cb_ur(event)
+        
+        # Get userbot client
+        userbot_client = ACTIVE_USERBOTS[user_id]
+        
+        # Get the original message to update it - ini akan menjadi status_msg
         message = await event.get_message()
-        await message.edit(
-            "🚀 **Memproses pesan yang belum dibaca...**\n\n"
-            "⏳ Harap tunggu, proses mungkin memakan waktu beberapa menit...",
+        status_msg = await message.edit(
+            "🔄 **Mencari chat yang belum dibaca...**\n\n"
+            "⏳ Harap tunggu, proses sedang dimulai...",
             buttons=None
         )
         
@@ -531,11 +550,18 @@ async def confirm_unread_start_handler(event):
         # Define a simple check_status function
         async def check_status(client, user_id, event):
             return True
-            
-        # Start processing unread chats
-        await process_unread_chats(event, bot, event.sender_id, is_allowed, check_status)
+        
+        # Import function yang diperlukan
+        from modules.unread import process_userbot_unread
+        
+        # Get settings (sudah di-import sebagai get_ur_settings)
+        settings = get_ur_settings(user_id)
+        
+        # Start processing unread chats dengan userbot client
+        await process_userbot_unread(event, userbot_client, user_id, status_msg, settings)
         
     except Exception as e:
+        import logging
         logging.error(f"Error in confirm_unread_start_handler: {e}")
         try:
             await event.answer("❌ Gagal memproses pesan. Silakan coba lagi.", alert=True)
@@ -724,3 +750,39 @@ async def cb_as_edit(event):
     i = int(event.data.decode().split(":")[1])
     NAV_EDIT_STATE[event.sender_id] = f"AS_EDIT:{i}"
     await event.edit("✏️ Kirim pesan pengganti:", buttons=[[Button.inline("❌ Batal", b"menu_as_set")]])
+
+@bot.on(events.CallbackQuery(pattern=r"stop_unread:(.+)"))
+async def stop_unread_handler(event):
+    """Handler untuk menghentikan proses unread"""
+    try:
+        target_user = int(event.data.decode().split(":")[1])
+        user_id = event.sender_id
+        
+        # Izinkan Admin atau member pemilik task
+        if user_id not in (ADMIN_ID, target_user):
+            return await event.answer("❌ Anda tidak memiliki izin untuk menghentikan proses ini.", alert=True)
+        
+        if target_user in ACTIVE_UNREAD_TASKS:
+            # Cancel task
+            task = ACTIVE_UNREAD_TASKS[target_user]
+            task.cancel()
+            del ACTIVE_UNREAD_TASKS[target_user]
+            
+            await event.answer("✅ Proses dihentikan!", alert=True)
+            
+            # Update message jika masih bisa
+            try:
+                message = await event.get_message()
+                await message.edit(
+                    "🛑 **Proses Dihentikan**\n\n"
+                    "Proses balas otomatis telah dihentikan oleh pengguna.",
+                    buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
+                )
+            except Exception as e:
+                logging.error(f"Error updating stop message: {e}")
+        else:
+            await event.answer("⚠️ Proses sudah selesai atau tidak berjalan.", alert=True)
+    except Exception as e:
+        import logging
+        logging.error(f"Error in stop_unread_handler: {e}")
+        await event.answer("❌ Terjadi kesalahan saat menghentikan proses.", alert=True)

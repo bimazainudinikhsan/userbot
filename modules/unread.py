@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from telethon import events, Button
 from telethon.tl.types import User, ChatBannedRights
-from telethon.errors import FloodWaitError, MessageNotModifiedError, UserNotParticipantError, BotMethodInvalidError
+from telethon.errors import FloodWaitError, MessageNotModifiedError, UserNotParticipantError, BotMethodInvalidError, ReplyMarkupInvalidError
 from telethon.tl.functions.channels import GetParticipantRequest
 
 # File penyimpanan setting
@@ -129,6 +129,9 @@ async def is_valid_user(client, entity):
 # Track progress for each user
 USER_PROGRESS = {}
 
+# Track active unread tasks for cancellation
+ACTIVE_UNREAD_TASKS = {}
+
 async def process_unread_chats(event, client, user_id, is_allowed, check_status):
     """Process unread messages in user's chats"""
     if not await check_status(client, user_id, event):
@@ -175,19 +178,40 @@ async def process_userbot_unread(event, client, user_id, status_msg, settings):
     """Handle unread messages processing for userbot"""
     target_chats = []
     
+    # Create a task that can be cancelled
+    import asyncio
+    current_task = asyncio.current_task()
+    ACTIVE_UNREAD_TASKS[user_id] = current_task
+    
     try:
-        # Get dialogs with unread messages
-        async for dialog in client.iter_dialogs(limit=100):
+        # Get dialogs with unread messages (limit=None untuk scan semua)
+        async for dialog in client.iter_dialogs(limit=None):
+            # Check if task was cancelled
+            if user_id not in ACTIVE_UNREAD_TASKS:
+                await status_msg.edit(
+                    "🛑 **Proses Dihentikan**\n\n"
+                    "Proses balas otomatis telah dihentikan oleh pengguna.",
+                    buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
+                )
+                return
+                
             try:
-                # Skip groups, channels, and broadcasts
-                if dialog.is_group or dialog.is_channel or dialog.is_broadcast:
+                # Skip groups and channels - only process user dialogs
+                if dialog.is_group or dialog.is_channel:
                     continue
                     
                 # Only process user dialogs with unread messages
                 if dialog.unread_count > 0 and dialog.is_user:
                     try:
-                        user = await client.get_entity(dialog.entity)
-                        if not getattr(user, 'bot', False):  # Skip bots
+                        # Get entity to verify it's a valid user (not bot)
+                        entity = await client.get_entity(dialog.entity)
+                        
+                        # Skip if it's a bot
+                        if getattr(entity, 'bot', False):
+                            continue
+                            
+                        # Additional check: ensure it's a User type (not Channel/Chat)
+                        if isinstance(entity, User):
                             target_chats.append(dialog)
                     except Exception as e:
                         logging.error(f"Error getting user {dialog.id}: {e}")
@@ -198,41 +222,76 @@ async def process_userbot_unread(event, client, user_id, status_msg, settings):
                 
         total_chats = len(target_chats)
         if total_chats == 0:
-            await status_msg.edit("✅ Tidak ada chat personal yang belum dibaca.")
+            if user_id in ACTIVE_UNREAD_TASKS:
+                del ACTIVE_UNREAD_TASKS[user_id]
+            await status_msg.edit(
+                "✅ **Tidak ada chat personal yang belum dibaca.**",
+                buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
+            )
             return
             
-        # Update status
-        await status_msg.edit(f"🔍 Ditemukan {total_chats} chat dengan pesan belum dibaca.\nMulai memproses...")
+        # Update status dengan tombol
+        buttons = [
+            [Button.inline("🛑 Hentikan Proses", f"stop_unread:{user_id}")],
+            [Button.inline("🔙 Kembali ke Menu", b"menu_start")]
+        ]
+        await status_msg.edit(
+            f"🔍 **Ditemukan {total_chats} chat** dengan pesan belum dibaca.\n"
+            f"🚀 **Memulai proses...**\n\n"
+            f"⏳ Harap tunggu, proses sedang berjalan...",
+            buttons=buttons
+        )
         
         success = 0
         failed = 0
         
         for i, dialog in enumerate(target_chats, 1):
+            # Check if task was cancelled
+            if user_id not in ACTIVE_UNREAD_TASKS:
+                await status_msg.edit(
+                    "🛑 **Proses Dihentikan**\n\n"
+                    f"Proses dihentikan setelah memproses {i-1}/{total_chats} chat.\n"
+                    f"✅ Berhasil: {success} | ❌ Gagal: {failed}",
+                    buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
+                )
+                return
+                
             try:
                 user = await client.get_entity(dialog.entity)
                 user_name = getattr(user, 'first_name', '') or getattr(user, 'title', 'Unknown')
                 
-                # Update progress
+                # Update progress di pesan yang sama
                 progress = int((i / total_chats) * 100)
-                progress_msg = (
-                    f"🚀 **Proses Berjalan** ({i}/{total_chats})\n"
+                progress_bar = "▓" * (progress // 10) + "░" * (10 - progress // 10)
+                progress_text = (
+                    f"🚀 **Proses Berjalan** ({i}/{total_chats}) - {progress}%\n"
+                    f"{progress_bar}\n\n"
                     f"👤 Target: **{user_name}**\n"
-                    f"✍️ Status: **Mengirim balasan...**\n"
+                    f"✍️ Status: **Mengirim balasan...**\n\n"
                     f"✅ Sukses: {success} | ❌ Gagal: {failed}"
                 )
                 
-                # Send progress update to admin
-                await event.respond(progress_msg)
+                # Update progress message dengan tombol
+                try:
+                    await status_msg.edit(progress_text, buttons=buttons)
+                except MessageNotModifiedError:
+                    pass
+                except Exception as e:
+                    logging.error(f"Error updating progress: {e}")
                 
                 # Mark as read
                 await client.send_read_acknowledge(dialog.entity)
                 
                 # Format message with user's name
-                message = settings['message'].format(
-                    name=user_name,
-                    id=user.id,
-                    username=getattr(user, 'username', '')
-                )
+                try:
+                    message = settings['message'].format(
+                        name=user_name,
+                        id=user.id,
+                        username=getattr(user, 'username', '')
+                    )
+                except KeyError:
+                    # Jika format gagal, gunakan pesan asli
+                    message = settings['message']
                 
                 # Typing effect and send message
                 async with client.action(dialog.entity, 'typing'):
@@ -241,12 +300,33 @@ async def process_userbot_unread(event, client, user_id, status_msg, settings):
                 
                 success += 1
                 
+                # Update progress setelah berhasil
+                progress_text = (
+                    f"🚀 **Proses Berjalan** ({i}/{total_chats}) - {progress}%\n"
+                    f"{progress_bar}\n\n"
+                    f"👤 Selesai: **{user_name}**\n"
+                    f"⏳ **Cooldown: Menunggu {settings.get('delay_between_chats', 5)} detik...**\n\n"
+                    f"✅ Sukses: {success} | ❌ Gagal: {failed}"
+                )
+                try:
+                    await status_msg.edit(progress_text, buttons=buttons)
+                except:
+                    pass
+                
                 # Add delay between messages
                 await asyncio.sleep(settings.get('delay_between_chats', 5))
                 
             except FloodWaitError as e:
                 wait_time = e.seconds
-                await event.respond(f"⚠️ **Menunggu {wait_time} detik** - Melebihi batas pengiriman Telegram...")
+                wait_text = (
+                    f"⚠️ **Menunggu {wait_time} detik**\n"
+                    f"Melebihi batas pengiriman Telegram...\n\n"
+                    f"✅ Sukses: {success} | ❌ Gagal: {failed}"
+                )
+                try:
+                    await status_msg.edit(wait_text, buttons=buttons)
+                except:
+                    pass
                 await asyncio.sleep(wait_time + 5)
                 continue
                 
@@ -255,26 +335,48 @@ async def process_userbot_unread(event, client, user_id, status_msg, settings):
                 failed += 1
                 continue
                 
+        # Update last used time
+        update_settings(user_id, {"last_used": datetime.now().isoformat()})
+        
+        # Remove from active tasks
+        if user_id in ACTIVE_UNREAD_TASKS:
+            del ACTIVE_UNREAD_TASKS[user_id]
+        
         # Send completion message
-        await event.respond(
+        completion_text = (
             f"✅ **Proses Selesai!**\n\n"
-            f"Total chat diproses: {total_chats}\n"
+            f"📊 Total chat diproses: {total_chats}\n"
             f"✅ Berhasil: {success}\n"
-            f"❌ Gagal: {failed}"
+            f"❌ Gagal: {failed}\n\n"
+            f"Semua pesan personal yang menumpuk sudah dibalas."
+        )
+        await status_msg.edit(
+            completion_text,
+            buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
         )
         
+    except asyncio.CancelledError:
+        # Task was cancelled, cleanup already done
+        if user_id in ACTIVE_UNREAD_TASKS:
+            del ACTIVE_UNREAD_TASKS[user_id]
+        raise
     except Exception as e:
+        # Remove from active tasks on error
+        if user_id in ACTIVE_UNREAD_TASKS:
+            del ACTIVE_UNREAD_TASKS[user_id]
+            
         error_msg = str(e).lower()
         logging.error(f"Error in process_userbot_unread: {e}")
         
+        error_text = ""
         if any(term in error_msg for term in ['flood', 'wait']):
-            await event.respond(
+            error_text = (
                 "⚠️ **Terlalu banyak permintaan**\n"
-                "Silakan tunggu beberapa saat dan coba lagi."
-                "\n\nKode Error: FLOOD_WAIT"
+                "Silakan tunggu beberapa saat dan coba lagi.\n\n"
+                "Kode Error: FLOOD_WAIT"
             )
         else:
-            return await event.respond(
+            error_text = (
                 f"❌ **Terjadi kesalahan**\n\n"
                 f"Pesan error: {str(e)[:200]}\n\n"
                 "Pastikan:\n"
@@ -282,96 +384,20 @@ async def process_userbot_unread(event, client, user_id, status_msg, settings):
                 "2. Koneksi internet stabil\n"
                 "3. Coba lagi nanti"
             )
-
-    total_count = len(target_chats)
-    if total_count == 0:
-        return await status_msg.edit("✅ Tidak ada chat personal yang belum dibaca.")
-
-    # Update last used time
-    update_settings(user_id, {"last_used": datetime.now().isoformat()})
-    
-    await status_msg.edit(
-        f"🔍 Ditemukan: **{total_count}** chat personal belum dibaca.\n"
-        f"🚀 **Memulai Auto Reply...**\n\n"
-        f"✍️ Efek Mengetik: **{settings.get('typing_duration', 3)} detik**\n"
-        f"⏳ Jeda Antar Chat: **{settings.get('delay_between_chats', 5)} detik**\n"
-        "⚠️ _Bot akan berjalan di latar belakang._"
-    )
-    
-    success = 0
-    failed = 0
-    processed = 0
-    
-    for dialog in target_chats:
+        
         try:
-            user = await client.get_entity(dialog.entity)
-            user_name = getattr(user, 'first_name', '') or getattr(user, 'title', 'Unknown')
-            
-            # Update status
-            processed += 1
-            progress = f"({processed}/{total_count})"
-            
-            try:
-                status_text = (
-                    f"🚀 **Proses Berjalan** {progress}\n"
-                    f"👤 Target: **{user_name}**\n"
-                    f"✍️ Status: **Sedang Mengetik...**\n"
-                    f"✅ Sukses: {success} | ❌ Gagal: {failed}"
-                )
-                await status_msg.edit(status_text)
-            except Exception:
-                pass
-            
-            # Mark as read
-            await client.send_read_acknowledge(dialog.entity)
-            
-            # Format message with user's name
-            message = settings['message'].format(
-                name=user_name,
-                id=user.id,
-                username=getattr(user, 'username', '')
+            await status_msg.edit(
+                error_text,
+                buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]]
             )
-            
-            # Typing effect
-            async with client.action(dialog.entity, 'typing'):
-                await asyncio.sleep(settings.get('typing_duration', 3))
-                await client.send_message(dialog.entity, message)
-            
-            success += 1
-            
-            # Show cooldown status
+        except:
             try:
-                status_text = (
-                    f"🚀 **Proses Berjalan** {progress}\n"
-                    f"👤 Selesai: **{user_name}**\n"
-                    f"⏳ **Cooldown: Menunggu {settings.get('delay_between_chats', 5)} detik...**\n"
-                    f"✅ Sukses: {success} | ❌ Gagal: {failed}"
-                )
-                await status_msg.edit(status_text)
-            except Exception:
+                await event.respond(error_text, buttons=[[Button.inline("🔙 Kembali ke Menu", b"menu_start")]])
+            except:
                 pass
-            
-            # Delay between chats
-            await asyncio.sleep(settings.get('delay_between_chats', 5))
-            
-        except FloodWaitError as e:
-            # Handle flood wait
-            wait_time = e.seconds
-            await status_msg.edit(f"⏳ **Tunggu {wait_time} detik**\nMelebihi batas pengiriman Telegram...")
-            await asyncio.sleep(wait_time + 5)
-            
-        except Exception as e:
-            logging.error(f"Error processing chat {dialog.id}: {e}")
-            failed += 1
-            
-    # Final status
-    await status_msg.edit(
-        f"✅ **Selesai Membalas Unread!**\n\n"
-        f"📊 Total: {total_count}\n"
-        f"✅ Berhasil: {success}\n"
-        f"❌ Gagal: {failed}\n\n"
-        f"Semua pesan personal yang menumpuk sudah dibalas."
-    )
+        
+        # Update last used time
+        update_settings(user_id, {"last_used": datetime.now().isoformat()})
 
 async def register(client, user_id, is_allowed, check_status, help_dict):
     """Register help commands"""

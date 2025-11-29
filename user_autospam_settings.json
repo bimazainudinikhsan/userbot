@@ -6,14 +6,15 @@
         "target_type": "all"
     },
     "8094929215": {
-        "enabled": false,
+        "enabled": true,
         "message": "asdasdasd",
         "delay": 2,
         "target_type": "all",
         "messages": [
-            "haii",
-            "/start"
+            "haii"
         ],
-        "replied_chats": []
+        "replied_chats": [
+            8396093349
+        ]
     }
 }
