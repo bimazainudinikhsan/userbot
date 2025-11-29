@@ -86,7 +86,16 @@ async def cb_start_auth(event):
              try: os.remove(f"{session_path}.session")
              except: pass
 
-        new_client = TelegramClient(session_path, API_ID, API_HASH)
+        # Buat client dengan timeout yang lebih lama untuk VPS
+        new_client = TelegramClient(
+            session_path, 
+            API_ID, 
+            API_HASH,
+            connection_retries=5,
+            retry_delay=2,
+            timeout=30,
+            request_retries=3
+        )
         await new_client.connect()
     except Exception as e:
         return await event.edit(f"❌ **Gagal Connect ke Server Telegram:**\n`{str(e)}`\nSilakan coba lagi beberapa saat lagi.")
@@ -127,6 +136,124 @@ async def cb_retry_code(event):
         f"(Format: 1 2 3 4 5)",
         buttons=[[Button.inline("❌ Batal Login", b"cancel_login")]]
     )
+
+# --- HANDLER RETRY SEND CODE (KIRIM ULANG KODE OTP) ---
+@bot.on(events.CallbackQuery(pattern=b"retry_send_code"))
+async def cb_retry_send_code(event):
+    """Handler untuk mengirim ulang kode OTP"""
+    import asyncio
+    from telethon.errors import FloodWaitError
+    
+    user_id = event.sender_id
+    if user_id not in LOGIN_STATE:
+        return await event.edit("❌ Sesi telah berakhir. Silakan mulai ulang.", buttons=[[Button.inline("🔄 Mulai Ulang", b"start_auth_process")]])
+    
+    state = LOGIN_STATE[user_id]
+    client = state.get("client")
+    phone = state.get("phone")
+    
+    if not client or not phone:
+        return await event.edit("❌ Data tidak lengkap. Silakan mulai ulang.", buttons=[[Button.inline("🔄 Mulai Ulang", b"start_auth_process")]])
+    
+    try:
+        msg = await event.edit("🔄 Mengirim ulang kode OTP...")
+        
+        # Retry mechanism
+        max_retries = 3
+        retry_delay = 2
+        sent = None
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Pastikan client masih terhubung
+                if not client.is_connected():
+                    await client.connect()
+                
+                # Kirim request kode dengan timeout lebih lama
+                sent = await asyncio.wait_for(
+                    client.send_code_request(phone),
+                    timeout=30
+                )
+                break  # Berhasil, keluar dari loop
+                
+            except asyncio.TimeoutError:
+                last_error = f"Timeout (percobaan {attempt + 1}/{max_retries})"
+                if attempt < max_retries - 1:
+                    await msg.edit(f"⏳ {last_error}. Mencoba lagi...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    raise Exception(f"Gagal mengirim kode setelah {max_retries} percobaan: Timeout")
+                    
+            except FloodWaitError as e:
+                wait_time = e.seconds
+                last_error = f"FloodWait: tunggu {wait_time} detik"
+                if attempt < max_retries - 1:
+                    await msg.edit(f"⏳ {last_error}. Menunggu...")
+                    await asyncio.sleep(wait_time + 1)
+                else:
+                    raise Exception(f"Gagal mengirim kode: {last_error}")
+                    
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    await msg.edit(f"⚠️ Error: {last_error}. Mencoba lagi ({attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    raise Exception(f"Gagal mengirim kode setelah {max_retries} percobaan: {last_error}")
+        
+        if sent is None:
+            raise Exception(f"Gagal mengirim kode: {last_error}")
+        
+        # Update state dengan hash baru
+        state["phone_code_hash"] = sent.phone_code_hash
+        state["step"] = "code"
+        
+        await msg.edit(
+            f"📩 **Kode Baru Terkirim ke {phone}**\n\n"
+            "Silakan masukkan kode OTP yang baru Anda terima dari Telegram.\n"
+            "Contoh: `1 2 3 4 5`\n\n"
+            "💡 **Tips:** Jika kode tidak datang, coba:\n"
+            "• Cek folder Spam/Notifikasi\n"
+            "• Pastikan nomor HP aktif\n"
+            "• Tunggu beberapa detik", 
+            buttons=[[Button.inline("🔄 Kirim Ulang Kode", b"retry_send_code")], [Button.inline("❌ Batal", b"cancel_login")]]
+        )
+        
+    except Exception as e:
+        error_msg = str(e)
+        import logging
+        logging.error(f"Error retrying send code to {phone}: {error_msg}")
+        
+        if "Timeout" in error_msg or "timeout" in error_msg.lower():
+            detailed_error = (
+                f"❌ **Timeout - Koneksi ke Telegram terlalu lama**\n\n"
+                f"**Kemungkinan penyebab:**\n"
+                f"• Koneksi internet VPS lambat\n"
+                f"• Firewall memblokir koneksi\n"
+                f"• Telegram API sedang sibuk\n\n"
+                f"**Solusi:**\n"
+                f"• Coba lagi dalam beberapa saat\n"
+                f"• Periksa koneksi internet server"
+            )
+        elif "FloodWait" in error_msg or "flood" in error_msg.lower():
+            detailed_error = (
+                f"❌ **Terlalu Banyak Permintaan**\n\n"
+                f"Telegram membatasi jumlah request. Silakan tunggu beberapa saat dan coba lagi."
+            )
+        else:
+            detailed_error = (
+                f"❌ **Gagal mengirim ulang kode**\n\n"
+                f"Error: `{error_msg[:200]}`\n\n"
+                f"**Tips:**\n"
+                f"• Coba lagi dalam beberapa saat\n"
+                f"• Periksa koneksi internet server"
+            )
+        
+        await event.edit(
+            detailed_error,
+            buttons=[[Button.inline("🔄 Coba Lagi", b"retry_send_code")], [Button.inline("❌ Batal", b"cancel_login")]]
+        )
 
 # --- HANDLER BATAL LOGIN ---
 @bot.on(events.CallbackQuery(pattern=b"cancel_login"))

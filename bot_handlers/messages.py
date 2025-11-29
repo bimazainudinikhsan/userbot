@@ -51,7 +51,53 @@ async def handle_incoming_message(event):
 
             try:
                 msg = await event.reply(f"🔄 Memproses `{clean_phone}`...")
-                sent = await client.send_code_request(clean_phone)
+                
+                # Retry mechanism untuk VPS yang mungkin memiliki koneksi tidak stabil
+                max_retries = 3
+                retry_delay = 2
+                sent = None
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Pastikan client masih terhubung
+                        if not client.is_connected():
+                            await client.connect()
+                        
+                        # Kirim request kode dengan timeout lebih lama
+                        sent = await asyncio.wait_for(
+                            client.send_code_request(clean_phone),
+                            timeout=30
+                        )
+                        break  # Berhasil, keluar dari loop
+                        
+                    except asyncio.TimeoutError:
+                        last_error = f"Timeout (percobaan {attempt + 1}/{max_retries})"
+                        if attempt < max_retries - 1:
+                            await msg.edit(f"⏳ {last_error}. Mencoba lagi...")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            raise Exception(f"Gagal mengirim kode setelah {max_retries} percobaan: Timeout")
+                            
+                    except FloodWaitError as e:
+                        wait_time = e.seconds
+                        last_error = f"FloodWait: tunggu {wait_time} detik"
+                        if attempt < max_retries - 1:
+                            await msg.edit(f"⏳ {last_error}. Menunggu...")
+                            await asyncio.sleep(wait_time + 1)
+                        else:
+                            raise Exception(f"Gagal mengirim kode: {last_error}")
+                            
+                    except Exception as e:
+                        last_error = str(e)
+                        if attempt < max_retries - 1:
+                            await msg.edit(f"⚠️ Error: {last_error}. Mencoba lagi ({attempt + 1}/{max_retries})...")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            raise Exception(f"Gagal mengirim kode setelah {max_retries} percobaan: {last_error}")
+                
+                if sent is None:
+                    raise Exception(f"Gagal mengirim kode: {last_error}")
                 
                 # Simpan state
                 LOGIN_STATE[user_id]["phone"] = clean_phone
@@ -61,11 +107,51 @@ async def handle_incoming_message(event):
                 await msg.edit(
                     f"📩 **Kode Terkirim ke {clean_phone}**\n\n"
                     "Silakan masukkan kode OTP yang Anda terima dari Telegram.\n"
-                    "Contoh: `1 2 3 4 5`", 
-                    buttons=[[Button.inline("❌ Batal", b"cancel_login")]]
+                    "Contoh: `1 2 3 4 5`\n\n"
+                    "💡 **Tips:** Jika kode tidak datang, coba:\n"
+                    "• Cek folder Spam/Notifikasi\n"
+                    "• Pastikan nomor HP aktif\n"
+                    "• Tunggu beberapa detik", 
+                    buttons=[[Button.inline("🔄 Kirim Ulang Kode", b"retry_send_code")], [Button.inline("❌ Batal", b"cancel_login")]]
                 )
             except Exception as e:
-                await event.reply(f"❌ Gagal kirim kode: {e}")
+                error_msg = str(e)
+                # Log error untuk debugging
+                import logging
+                logging.error(f"Error sending code to {clean_phone}: {error_msg}")
+                
+                # Pesan error yang lebih informatif
+                if "Timeout" in error_msg or "timeout" in error_msg.lower():
+                    detailed_error = (
+                        f"❌ **Timeout - Koneksi ke Telegram terlalu lama**\n\n"
+                        f"**Kemungkinan penyebab:**\n"
+                        f"• Koneksi internet VPS lambat\n"
+                        f"• Firewall memblokir koneksi\n"
+                        f"• Telegram API sedang sibuk\n\n"
+                        f"**Solusi:**\n"
+                        f"• Coba lagi dalam beberapa saat\n"
+                        f"• Periksa koneksi internet server\n"
+                        f"• Pastikan firewall tidak memblokir Telegram"
+                    )
+                elif "FloodWait" in error_msg or "flood" in error_msg.lower():
+                    detailed_error = (
+                        f"❌ **Terlalu Banyak Permintaan**\n\n"
+                        f"Telegram membatasi jumlah request. Silakan tunggu beberapa saat dan coba lagi."
+                    )
+                else:
+                    detailed_error = (
+                        f"❌ **Gagal mengirim kode**\n\n"
+                        f"Error: `{error_msg[:200]}`\n\n"
+                        f"**Tips:**\n"
+                        f"• Pastikan nomor HP benar\n"
+                        f"• Coba lagi dalam beberapa saat\n"
+                        f"• Periksa koneksi internet server"
+                    )
+                
+                await event.reply(
+                    detailed_error,
+                    buttons=[[Button.inline("🔄 Coba Lagi", b"start_auth_process")], [Button.inline("❌ Batal", b"cancel_login")]]
+                )
             return
 
         elif step == "code":
