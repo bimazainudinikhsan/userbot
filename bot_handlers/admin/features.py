@@ -3,27 +3,58 @@ from config import bot, ADMIN_ID
 from state import GLOBAL_FEATURE_FLAGS, EDIT_PERMISSION_STATE, USER_PERMISSIONS
 from database import get_all_members_safe, get_member_permissions, update_member_permissions
 
-ALL_FEATURES_LIST = ["ping", "alive", "id", "botpesan", "spam", "autoreply", "setreply", "faktur"]
+ALL_FEATURES_LIST = [
+    "ping",           # .ping - Cek latency bot
+    "alive",          # .alive - Cek status bot
+    "help",           # .help - Menu bantuan
+    "spam",           # .spam - Spam pesan
+    "autoreply",      # Auto Reply - Balas pesan otomatis
+    "faktur",         # .faktur - Buat faktur/invoice
+    "unread",         # .replyunread - Balas pesan unread
+    "spambot",        # .spambot - Spam bot biasa
+    "spambotpremium", # .spambotpremium - Spam bot premium
+    "spamai",         # .spamai - Spam dengan AI
+    "automessage",    # Auto Message - Kirim pesan otomatis
+]
+
+FEATURE_LABELS = {
+    "ping": "🏓 Ping",
+    "alive": "⚡ Alive",
+    "help": "📜 Help",
+    "spam": "💥 Spam",
+    "autoreply": "💬 Auto Reply",
+    "faktur": "📑 Faktur",
+    "unread": "👻 Unread",
+    "spambot": "🤖 SpamBot",
+    "spambotpremium": "💎 SpamPrem",
+    "spamai": "🧠 SpamAI",
+    "automessage": "📨 AutoMsg",
+}
 
 # --- Global Features ---
 @bot.on(events.CallbackQuery(pattern=b"cmd_global_fitur"))
 async def cb_global_fitur_menu(event):
     if event.sender_id != ADMIN_ID: return
     
-    text = "🌍 **KELOLA FITUR GLOBAL**\nMatikan/nyalakan fitur untuk SEMUA MEMBER."
+    text = (
+        "🌍 **KELOLA FITUR GLOBAL**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Matikan/nyalakan fitur untuk SEMUA MEMBER.\n\n"
+        "✅ = Aktif | 🔴 = Nonaktif"
+    )
     buttons = []
     row = []
     
     for feature in ALL_FEATURES_LIST:
         is_active = GLOBAL_FEATURE_FLAGS.get(feature, True)
         icon = "✅" if is_active else "🔴"
-        row.append(Button.inline(f"{icon} {feature}", f"GLB_TOGGLE:{feature}"))
+        label = FEATURE_LABELS.get(feature, feature)
+        row.append(Button.inline(f"{icon} {label}", f"GLB_TOGGLE:{feature}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
             
     if row: buttons.append(row)
-    # TOMBOL KEMBALI FIXED
     buttons.append([Button.inline("🔙 Kembali", b"menu_admin_dashboard")])
     await event.edit(text, buttons=buttons)
 
@@ -68,12 +99,22 @@ async def show_checklist(event, target):
     row = []
     for f in ALL_FEATURES_LIST:
         mark = "✅" if p[f] else "❌"
-        row.append(Button.inline(f"{mark} {f}", f"TOGGLE_F:{target}:{f}"))
-        if len(row)==2: btns.append(row); row=[]
+        label = FEATURE_LABELS.get(f, f)
+        row.append(Button.inline(f"{mark} {label}", f"TOGGLE_F:{target}:{f}"))
+        if len(row) == 2: 
+            btns.append(row)
+            row = []
     if row: btns.append(row)
     btns.append([Button.inline("💾 SIMPAN", f"SAVE_FITUR:{target}")])
     btns.append([Button.inline("🔙 Batal", b"cmd_admin_fitur")])
-    await event.edit(f"🛠 **Edit Izin User:** `{target}`", buttons=btns)
+    
+    text = (
+        f"🛠 **EDIT IZIN USER**\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 User ID: `{target}`\n\n"
+        f"✅ = Diizinkan | ❌ = Diblokir"
+    )
+    await event.edit(text, buttons=btns)
 
 @bot.on(events.CallbackQuery(pattern=r"TOGGLE_F:(.+):(.+)"))
 async def cb_toggle(event):
