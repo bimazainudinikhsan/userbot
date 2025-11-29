@@ -76,11 +76,52 @@ The bot runs automatically via the "Run Telegram Bot" workflow. It:
 
 ## Recent Changes (2025-11-29)
 
+### Enhanced Spam Features
+Completely revamped spam features with advanced settings, progress reporting, and stop controls:
+
+#### SpamBot Biasa (`.spambot`)
+- **New Command**: `.spambot <target> <jumlah> <pesan>`
+- Added custom message parameter
+- Progress reporting to admin with visual progress bar
+- Stop button for admin to halt spam
+
+#### SpamBot Premium (`.spambotpremium`)
+- **New Command**: `.spambotpremium <target> <jumlah>`
+- **Settings Menu**: `.set_spambotpremium` - CRUD menu for managing settings
+  - Manage multiple messages (add/edit/delete)
+  - Configure delay min-max (e.g., 3-5 seconds)
+  - Toggle reply to message (on/off)
+- Random message selection from configured list
+- Progress reporting with stop button
+
+#### SpamAI Smart (`.spamai`)
+- **New Command**: `.spamai <target> <delay> <jumlah>`
+- Scrapes 255 words from target group
+- SARA word filtering (comprehensive Indonesian/English blacklist)
+- Generates 50 sentences (3-5 words each)
+- Auto-replies to other users' messages
+- Word refresh every 10 minutes
+- Progress reporting with stop button
+
+#### Admin Features
+- All spam modules send progress to admin with:
+  - User ID and target info
+  - Visual progress bar (▓░)
+  - Messages sent counter
+  - Status indicator
+  - Stop button to halt spam
+
 ### Fix: Trial Feature Toggle
 Fixed the trial feature so that when admin turns off trial in dashboard, users cannot see or click the trial button:
 - Changed `bot_handlers/nav.py` to use `GLOBAL_CONFIG` instead of `GLOBAL_FEATURE_FLAGS`
 - Now both admin toggle and user menu check the same variable
 - Default value set to `False` to match state.py initialization
+
+### Enhanced Feature Management UI
+Updated admin feature management to display all 11 features with descriptive icons:
+- 🏓 Ping, ⚡ Alive, 📜 Help, 💥 Spam
+- 💬 Auto Reply, 📑 Faktur, 👻 Unread
+- 🤖 SpamBot, 💎 SpamPrem, 🧠 SpamAI, 📨 AutoMsg
 
 ### Setup for Replit Environment
 1. Installed Python 3.11 and all required dependencies:
