@@ -80,6 +80,10 @@ def update_member_data(user_id, key, value):
     """
     Fungsi update fleksibel. Memetakan nama kolom ke index kolom di Sheets.
     """
+    if member_sheet is None:
+        print(f"⚠️ Cannot update member data: Google Sheets not available")
+        return False
+    
     # Mapping Nama Kolom -> Nomor Kolom (1-based index)
     COL_MAP = {
         "User ID": 1,
@@ -116,26 +120,51 @@ def update_member_data(user_id, key, value):
 # WRAPPER FUNCTIONS (UNTUK KOMPATIBILITAS)
 # ==========================================
 def update_member_expire(row_idx, new_expire_str):
+    if member_sheet is None:
+        print(f"⚠️ Cannot update member expire: Google Sheets not available")
+        return False
     # row_idx disini bisa berupa user_id jika dipanggil dari modul baru
     # Kita cek tipe datanya
-    if isinstance(row_idx, int) and row_idx < 10000: # Asumsi ID row sheet kecil
-        member_sheet.update_cell(row_idx, 5, new_expire_str)
-    else:
-        update_member_data(row_idx, "Expired", new_expire_str)
+    try:
+        if isinstance(row_idx, int) and row_idx < 10000: # Asumsi ID row sheet kecil
+            member_sheet.update_cell(row_idx, 5, new_expire_str)
+            return True
+        else:
+            return update_member_data(row_idx, "Expired", new_expire_str)
+    except Exception as e:
+        print(f"❌ Failed to update member expire: {e}")
+        return False
 
 def update_member_status(user_id_or_row, new_status, reason=""):
-    if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
-        member_sheet.update_cell(user_id_or_row, 4, new_status)
-    else:
-        update_member_data(user_id_or_row, "Status", new_status)
+    if member_sheet is None:
+        print(f"⚠️ Cannot update member status: Google Sheets not available")
+        return False
+    try:
+        if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
+            member_sheet.update_cell(user_id_or_row, 4, new_status)
+            return True
+        else:
+            return update_member_data(user_id_or_row, "Status", new_status)
+    except Exception as e:
+        print(f"❌ Failed to update member status: {e}")
+        return False
 
 def update_member_name_email(user_id_or_row, name, email):
-    if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
-        member_sheet.update_cell(user_id_or_row, 2, name)
-        member_sheet.update_cell(user_id_or_row, 3, email)
-    else:
-        update_member_data(user_id_or_row, "Nama", name)
-        update_member_data(user_id_or_row, "Email", email)
+    if member_sheet is None:
+        print(f"⚠️ Cannot update member name/email: Google Sheets not available")
+        return False
+    try:
+        if isinstance(user_id_or_row, int) and user_id_or_row < 10000:
+            member_sheet.update_cell(user_id_or_row, 2, name)
+            member_sheet.update_cell(user_id_or_row, 3, email)
+            return True
+        else:
+            result1 = update_member_data(user_id_or_row, "Nama", name)
+            result2 = update_member_data(user_id_or_row, "Email", email)
+            return result1 and result2
+    except Exception as e:
+        print(f"❌ Failed to update member name/email: {e}")
+        return False
 
 def update_member_permissions(user_id, perm_list):
     return update_member_data(user_id, "Permissions", perm_list)
@@ -154,23 +183,45 @@ def get_member_permissions(user_id):
 # ADD & DELETE
 # ==========================================
 def append_member(user_id, name="-", email="-", months=0):
-    join_time = datetime.now().strftime("%d-%m-%Y %H:%M")
+    if member_sheet is None:
+        print(f"⚠️ Cannot append member: Google Sheets not available")
+        # Return a default expiry date so callers don't break
+        now = datetime.now()
+        if months > 0:
+            expire = (now + timedelta(days=30 * int(months))).strftime("%d-%m-%Y")
+        else:
+            expire = (now + timedelta(days=1)).strftime("%d-%m-%Y")
+        return expire
     
-    # Hitung Expired jika months > 0
-    now = datetime.now()
-    if months > 0:
-        expire = (now + timedelta(days=30 * int(months))).strftime("%d-%m-%Y")
-    else:
-        # Default 1 hari (Trial)
-        expire = (now + timedelta(days=1)).strftime("%d-%m-%Y")
-    
-    # Default Permissions: ALL
-    row_data = [str(user_id), name, email, "Pending", expire, join_time, "", "ALL"]
-    
-    member_sheet.append_row(row_data)
-    return expire
+    try:
+        join_time = datetime.now().strftime("%d-%m-%Y %H:%M")
+        
+        # Hitung Expired jika months > 0
+        now = datetime.now()
+        if months > 0:
+            expire = (now + timedelta(days=30 * int(months))).strftime("%d-%m-%Y")
+        else:
+            # Default 1 hari (Trial)
+            expire = (now + timedelta(days=1)).strftime("%d-%m-%Y")
+        
+        # Default Permissions: ALL
+        row_data = [str(user_id), name, email, "Pending", expire, join_time, "", "ALL"]
+        
+        member_sheet.append_row(row_data)
+        return expire
+    except Exception as e:
+        print(f"❌ Failed to append member: {e}")
+        # Return expiry anyway
+        now = datetime.now()
+        if months > 0:
+            return (now + timedelta(days=30 * int(months))).strftime("%d-%m-%Y")
+        else:
+            return (now + timedelta(days=1)).strftime("%d-%m-%Y")
 
 def delete_member(user_id):
+    if member_sheet is None:
+        print(f"⚠️ Cannot delete member: Google Sheets not available")
+        return False
     idx, row = find_member_row(user_id)
     if idx:
         try:
@@ -186,5 +237,9 @@ def save_session_to_sheet(user_id, session_string):
     return update_member_data(user_id, "Session String", session_string)
 
 def log_history(user_id, months, total, status):
+    if history_sheet is None:
+        print(f"⚠️ Cannot log history: Google Sheets not available")
+        return False
     ts = datetime.now().strftime("%d-%m-%Y %H:%M")
     history_sheet.append_row([str(user_id), str(months), str(total), status, ts])
+    return True
