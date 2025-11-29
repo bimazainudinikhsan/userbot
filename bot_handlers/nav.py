@@ -298,13 +298,78 @@ async def cb_as_d(event): NAV_EDIT_STATE[event.sender_id]="AS_WAIT_DELAY"; await
 async def cb_lc(event): await event.edit("📡 **LIVE CHAT**\nHubungkan ke Admin.", buttons=[[Button.inline("💬 Mulai", b"start_livechat")], [Button.inline("⬅️ Back", b"menu_start")]])
 
 @bot.on(events.CallbackQuery(pattern=b"spam_menu"))
-async def cb_sp(event): await event.edit("🤖 **MENU SPAM**", buttons=[[Button.inline("🤖 Biasa", b"guide_spam_std")], [Button.inline("💎 Premium", b"guide_spam_prem")], [Button.inline("🧠 AI", b"guide_spam_ai")], [Button.inline("⬅️ Back", b"menu_start")]])
+async def cb_sp(event): 
+    text = (
+        "🤖 **MENU SPAM**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pilih jenis spam yang ingin digunakan.\n"
+        "Progress akan ditampilkan di bot admin."
+    )
+    buttons = [
+        [Button.inline("🤖 SpamBot Biasa", b"guide_spam_std")],
+        [Button.inline("💎 SpamBot Premium", b"guide_spam_prem")],
+        [Button.inline("🧠 SpamAI Smart", b"guide_spam_ai")],
+        [Button.inline("⬅️ Kembali", b"menu_start")]
+    ]
+    await event.edit(text, buttons=buttons)
+
 @bot.on(events.CallbackQuery(pattern=b"guide_spam_std"))
-async def cb_sp1(event): await event.edit("🤖 **SPAM BIASA**\n`.spambot <target> <jml>`", buttons=[[Button.inline("🔙 Back", b"spam_menu")]])
+async def cb_sp1(event): 
+    text = (
+        "🤖 **SPAM BIASA**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**Penggunaan:**\n"
+        "`.spambot <target> <jumlah> <pesan>`\n\n"
+        "**Contoh:**\n"
+        "`.spambot @grupku 20 Halo semuanya`\n\n"
+        "**Keterangan:**\n"
+        "• target: username/ID grup/user\n"
+        "• jumlah: berapa pesan (max 100)\n"
+        "• pesan: isi pesan yang dikirim\n"
+        "• Delay: 2 detik per pesan"
+    )
+    await event.edit(text, buttons=[[Button.inline("🔙 Kembali", b"spam_menu")]])
+
 @bot.on(events.CallbackQuery(pattern=b"guide_spam_prem"))
-async def cb_sp2(event): await event.edit("💎 **SPAM PREM**\n`.spambotpremium <target> <jml>`", buttons=[[Button.inline("🔙 Back", b"spam_menu")]])
+async def cb_sp2(event): 
+    text = (
+        "💎 **SPAM PREMIUM**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**Penggunaan Spam:**\n"
+        "`.spambotpremium <target> <jumlah>`\n\n"
+        "**Pengaturan:**\n"
+        "`.set_spambotpremium`\n\n"
+        "**Contoh:**\n"
+        "`.spambotpremium @grupku 30`\n\n"
+        "**Fitur Premium:**\n"
+        "• Multi pesan (random)\n"
+        "• Delay custom (min-max detik)\n"
+        "• Reply ke pesan atas (on/off)\n"
+        "• Menu CRUD untuk kelola pesan"
+    )
+    await event.edit(text, buttons=[[Button.inline("🔙 Kembali", b"spam_menu")]])
+
 @bot.on(events.CallbackQuery(pattern=b"guide_spam_ai"))
-async def cb_sp3(event): await event.edit("🧠 **SPAM AI**\n`.spamai <target> <min-max> <jml> <msg>`", buttons=[[Button.inline("🔙 Back", b"spam_menu")]])
+async def cb_sp3(event): 
+    text = (
+        "🧠 **SPAM AI SMART**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**Penggunaan:**\n"
+        "`.spamai <target> <delay> <jumlah>`\n\n"
+        "**Contoh:**\n"
+        "`.spamai @grupku 5-10 50`\n\n"
+        "**Keterangan:**\n"
+        "• target: username/ID grup\n"
+        "• delay: 5-10 (random 5-10 detik)\n"
+        "• jumlah: berapa pesan (max 100)\n\n"
+        "**Fitur AI:**\n"
+        "• Scraping 255 kata dari grup\n"
+        "• Filter kata SARA otomatis\n"
+        "• Generate 50 kalimat (3-5 kata)\n"
+        "• Reply pesan orang lain\n"
+        "• Refresh kata setiap 10 menit"
+    )
+    await event.edit(text, buttons=[[Button.inline("🔙 Kembali", b"spam_menu")]])
 
 @bot.on(events.CallbackQuery(pattern=b"menu_faktur"))
 async def cb_fk(event): await event.edit("📑 **FAKTUR**\nSetting layanan & bank.", buttons=[[Button.inline("⚙️ Atur", b"open_faktur_settings")], [Button.inline("⬅️ Back", b"menu_start")]])

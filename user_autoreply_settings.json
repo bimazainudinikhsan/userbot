@@ -5,7 +5,7 @@
     "replied_chats": []
   },
   "8022699623": {
-    "auto_reply": true,
+    "auto_reply": false,
     "reply_content": [
       {
         "type": "text",
