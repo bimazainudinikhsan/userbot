@@ -7,5 +7,13 @@
     },
     "None": {
         "message": "Maaf baru balas, ada yang bisa dibantu? (Auto Reply Unread)"
+    },
+    "8094929215": {
+        "message": "iyaa",
+        "typing_duration": 3,
+        "delay_between_chats": 5,
+        "max_retries": 3,
+        "last_used": null,
+        "last_updated": "2025-11-30T04:03:16.173481"
     }
 }

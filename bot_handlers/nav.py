@@ -15,8 +15,17 @@ from database import (
 from state import GLOBAL_FEATURE_FLAGS, WAIT_NAME, GLOBAL_CONFIG, ACTIVE_USERBOTS
 
 # --- IMPORT MODULES ---
-from modules.unread import get_settings as get_ur_settings, save_user_message as update_ur_message
+from modules.unread import (
+    get_settings as get_ur_settings, 
+    update_settings as update_ur_settings,
+    is_unread_mode_enabled,
+    set_unread_mode
+)
 from modules.auto_spam import get_settings as get_as_settings, update_setting as update_as_setting
+
+# Backward compatibility
+def update_ur_message(user_id, message):
+    return update_ur_settings(user_id, {"message": message})
 
 try:
     from modules.faktur import show_setting_menu as show_faktur_settings
@@ -93,8 +102,8 @@ def get_main_menu_data(user_id, row=None):
             )
             buttons = [
                 [Button.inline("🔌 KONEKSI & STATUS", b"menu_connect_ub")],
-            [Button.inline(" Unread Mode", b"menu_unread"), Button.inline("📨 Auto Message", b"menu_autospam")],
-            [Button.inline("🤖 Spam & AI", b"spam_menu")],
+                [Button.inline("🔔 Unread Mode", b"menu_unread"), Button.inline("📨 Auto Message", b"menu_autospam")],
+                [Button.inline("🤖 Spam & AI", b"spam_menu")],
                 [Button.inline("📑 Buat Faktur", b"menu_faktur")],
             ]
             if user_id == ADMIN_ID:
@@ -284,11 +293,32 @@ async def nav_input_listener(event):
         await event.reply("✅ Disimpan!")
         await cb_as_set(await event.reply("🔄 Memuat..."))
 
+    # Handle unread message template
     elif state == "UR_WAIT_MSG":
         update_ur_message(user_id, text)
         del NAV_EDIT_STATE[user_id]
-        await event.reply("✅ Disimpan!")
-        await cb_ur_set(await event.reply("🔄 Memuat..."))
+        await event.reply("✅ Pesan berhasil disimpan!")
+        await cb_ur_s(await event.reply("🔄 Memuat..."))
+        
+    # Handle unread delay setting
+    elif state == "UR_SET_DELAY":
+        if text.isdigit() and 3 <= int(text) <= 60:
+            update_ur_settings(user_id, {"delay_between_chats": int(text)})
+            del NAV_EDIT_STATE[user_id]
+            await event.reply(f"✅ Delay antar chat diatur menjadi {text} detik!")
+            await cb_ur_s(await event.reply("🔄 Memuat..."))
+        else:
+            await event.reply("❌ Masukkan angka antara 3-60 untuk delay (dalam detik).")
+            
+    # Handle typing duration setting
+    elif state == "UR_SET_TYPING":
+        if text.isdigit() and 1 <= int(text) <= 10:
+            update_ur_settings(user_id, {"typing_duration": int(text)})
+            del NAV_EDIT_STATE[user_id]
+            await event.reply(f"✅ Durasi mengetik diatur menjadi {text} detik!")
+            await cb_ur_s(await event.reply("🔄 Memuat..."))
+        else:
+            await event.reply("❌ Masukkan angka antara 1-10 untuk durasi mengetik (dalam detik).")
         
     elif isinstance(state, str) and state.startswith("AS_EDIT:"):
         try:
@@ -318,11 +348,199 @@ async def nav_input_listener(event):
 # ==========================================
 
 @bot.on(events.CallbackQuery(pattern=b"menu_unread"))
-async def cb_ur(event): await event.edit("👻 **UNREAD**\nCmd: `.replyunread`", buttons=[[Button.inline("⚙️ Atur", b"menu_ur_set")], [Button.inline("⬅️ Back", b"menu_start")]])
+async def cb_ur(event):
+    settings = get_ur_settings(event.sender_id)
+    is_enabled = is_unread_mode_enabled(event.sender_id)
+    
+    text = (
+        "� **MODE BALAS OTOMATIS**\n\n"
+        f"Status: {'🟢 AKTIF' if is_enabled else '🔴 NONAKTIF'}\n"
+        f"Pesan: `{settings.get('message', 'Belum diatur')[:50]}...`\n\n"
+        "📌 **Cara Penggunaan:**\n"
+        "1. Aktifkan mode balas otomatis\n"
+        "2. Atur pesan balasan yang diinginkan\n"
+        "3. Klik 'Mulai Balas' untuk memproses pesan\n\n"
+        "📝 **Fitur:**\n"
+        "• Balas otomatis ke chat yang belum dibaca\n"
+        "• Dapat disesuaikan pesannya\n"
+        "• Hanya untuk chat personal (bukan grup/channel)"
+    )
+    
+    buttons = [
+        [
+            Button.inline(f"{'🔴 Matikan' if is_enabled else '🟢 Nyalakan'}", b"unread_toggle"),
+            Button.inline("⚙️ Pengaturan", b"menu_ur_set")
+        ],
+        [
+            Button.inline("🚀 Mulai Balas", b"unread_start"),
+            Button.inline("📊 Status", b"unread_status")
+        ],
+        [Button.inline("🔙 Kembali", b"menu_start")]
+    ]
+    
+    try:
+        await event.edit(text, buttons=buttons)
+    except MessageNotModifiedError:
+        await event.answer("Tidak ada perubahan", alert=False)
+
 @bot.on(events.CallbackQuery(pattern=b"menu_ur_set"))
-async def cb_ur_s(event): await event.edit(f"⚙️ **SET UNREAD**\nPesan: `{get_ur_settings(event.sender_id).get('message')}`", buttons=[[Button.inline("✏️ Edit", b"nav_ur_edit")], [Button.inline("🔙 Back", b"menu_unread")]])
+async def cb_ur_s(event):
+    settings = get_ur_settings(event.sender_id)
+    text = (
+        "⚙️ **PENGATURAN BALAS OTOMATIS**\n\n"
+        f"✉️ **Pesan Saat Ini:**\n`{settings.get('message', 'Belum diatur')}`\n\n"
+        f"⏱️ **Delay Antar Chat:** `{settings.get('delay_between_chats', 5)} detik`\n"
+        f"⌨️ **Durasi Mengetik:** `{settings.get('typing_duration', 3)} detik`\n\n"
+        "Gunakan tombol di bawah untuk mengatur:"
+    )
+    
+    buttons = [
+        [Button.inline("✏️ Edit Pesan", b"nav_ur_edit")],
+        [
+            Button.inline("⏱️ Set Delay", b"unread_set_delay"),
+            Button.inline("⌨️ Set Mengetik", b"unread_set_typing")
+        ],
+        [Button.inline("🔙 Kembali", b"menu_unread")]
+    ]
+    
+    await event.edit(text, buttons=buttons)
+
 @bot.on(events.CallbackQuery(pattern=b"nav_ur_edit"))
-async def cb_ur_e(event): NAV_EDIT_STATE[event.sender_id]="UR_WAIT_MSG"; await event.edit("✏️ Kirim pesan baru:", buttons=[[Button.inline("❌ Batal", b"menu_ur_set")]])
+async def cb_ur_e(event):
+    NAV_EDIT_STATE[event.sender_id] = "UR_WAIT_MSG"
+    await event.edit(
+        "✍️ **ATUR PESAN BALASAN**\n\n"
+        "Silakan kirim pesan yang akan digunakan untuk membalas chat yang belum dibaca.\n\n"
+        "**Variabel yang tersedia:**\n"
+        "• `{name}` - Nama pengirim\n"
+        "• `{id}` - ID pengirim\n\n"
+        "Contoh:\n"
+        "`Hai {name}, terima kasih sudah menghubungi. Saya akan segera membalas pesan Anda.`",
+        buttons=[[Button.inline("❌ Batal", b"menu_ur_set")]]
+    )
+
+@bot.on(events.CallbackQuery(pattern=b"unread_toggle"))
+async def unread_toggle_handler(event):
+    current_status = is_unread_mode_enabled(event.sender_id)
+    set_unread_mode(event.sender_id, not current_status)
+    await event.answer(f"Mode balas otomatis {'diaktifkan' if not current_status else 'dinonaktifkan'}", alert=False)
+    await cb_ur(event)
+
+@bot.on(events.CallbackQuery(pattern=b"unread_status"))
+async def unread_status_handler(event):
+    try:
+        settings = get_ur_settings(event.sender_id)
+        is_enabled = is_unread_mode_enabled(event.sender_id)
+        last_used = settings.get('last_used', 'Belum pernah digunakan')
+        
+        if last_used and last_used != 'Belum pernah digunakan':
+            try:
+                last_used_dt = datetime.fromisoformat(last_used)
+                last_used = last_used_dt.strftime("%d %b %Y %H:%M")
+            except:
+                pass
+        
+        text = (
+            "📊 **STATUS BALAS OTOMATIS**\n\n"
+            f"🔘 Status: {'🟢 AKTIF' if is_enabled else '🔴 NONAKTIF'}\n"
+            f"📅 Terakhir Digunakan: {last_used}\n"
+            f"⏱️ Delay: {settings.get('delay_between_chats', 5)} detik\n"
+            f"⌨️ Durasi Mengetik: {settings.get('typing_duration', 3)} detik\n\n"
+            f"📝 **Pesan:**\n`{settings.get('message', 'Belum diatur')}`"
+        )
+        
+        buttons = [
+            [Button.inline("🔄 Perbarui", b"unread_status")],
+            [Button.inline("🔙 Kembali", b"menu_unread")]
+        ]
+        
+        try:
+            await event.edit(text, buttons=buttons)
+        except MessageNotModifiedError:
+            await event.answer("Tidak ada perubahan")
+    except Exception as e:
+        logging.error(f"Error in unread_status_handler: {e}")
+        await event.answer("❌ Terjadi kesalahan. Silakan coba lagi.", alert=True)
+
+@bot.on(events.CallbackQuery(pattern=b"unread_set_delay"))
+async def unread_set_delay_handler(event):
+    NAV_EDIT_STATE[event.sender_id] = "UR_SET_DELAY"
+    current_delay = get_ur_settings(event.sender_id).get('delay_between_chats', 5)
+    await event.edit(
+        f"⏱ **ATUR DELAY ANTAR CHAT**\n\n"
+        f"Delay saat ini: `{current_delay}` detik\n\n"
+        "Masukkan angka (dalam detik) untuk delay antar pengiriman pesan.\n"
+        "Minimal 3 detik, maksimal 60 detik.",
+        buttons=[[Button.inline("❌ Batal", b"menu_ur_set")]]
+    )
+
+@bot.on(events.CallbackQuery(pattern=b"unread_set_typing"))
+async def unread_set_typing_handler(event):
+    NAV_EDIT_STATE[event.sender_id] = "UR_SET_TYPING"
+    current_duration = get_ur_settings(event.sender_id).get('typing_duration', 3)
+    await event.edit(
+        f"⌨️ **ATUR DURASI MENGETIK**\n\n"
+        f"Durasi saat ini: `{current_duration}` detik\n\n"
+        "Masukkan angka (dalam detik) untuk durasi efek mengetik.\n"
+        "Minimal 1 detik, maksimal 10 detik.",
+        buttons=[[Button.inline("❌ Batal", b"menu_ur_set")]]
+    )
+
+@bot.on(events.CallbackQuery(pattern=b"unread_start"))
+async def unread_start_handler(event):
+    settings = get_ur_settings(event.sender_id)
+    if not settings.get('message'):
+        await event.answer("❌ Silakan atur pesan terlebih dahulu di pengaturan.", alert=True)
+        return await cb_ur_s(event)
+    
+    if not is_unread_mode_enabled(event.sender_id):
+        set_unread_mode(event.sender_id, True)
+    
+    await event.edit(
+        "🚀 **MEMULAI BALAS PESAN**\n\n"
+        "Bot akan mulai membalas pesan yang belum dibaca.\n"
+        "Proses ini berjalan di latar belakang.\n\n"
+        f"🔘 Status: {'🟢 AKTIF' if is_unread_mode_enabled(event.sender_id) else '🔴 NONAKTIF'}\n"
+        f"⏱️ Delay: {settings.get('delay_between_chats', 5)} detik\n"
+        f"⌨️ Durasi Mengetik: {settings.get('typing_duration', 3)} detik\n\n"
+        f"📝 **Pesan:**\n`{settings.get('message')[:100]}...`\n\n"
+        "Tekan tombol di bawah untuk memulai atau batalkan.",
+        buttons=[
+            [Button.inline("✅ Ya, Mulai Sekarang", b"confirm_unread_start")],
+            [Button.inline("❌ Batalkan", b"menu_unread")]
+        ]
+    )
+
+@bot.on(events.CallbackQuery(pattern=b"confirm_unread_start"))
+async def confirm_unread_start_handler(event):
+    try:
+        from modules.unread import process_unread_chats
+        
+        # Get the original message to update it
+        message = await event.get_message()
+        await message.edit(
+            "🚀 **Memproses pesan yang belum dibaca...**\n\n"
+            "⏳ Harap tunggu, proses mungkin memakan waktu beberapa menit...",
+            buttons=None
+        )
+        
+        # Define a simple is_allowed function that always returns True
+        async def is_allowed(feature):
+            return True
+            
+        # Define a simple check_status function
+        async def check_status(client, user_id, event):
+            return True
+            
+        # Start processing unread chats
+        await process_unread_chats(event, bot, event.sender_id, is_allowed, check_status)
+        
+    except Exception as e:
+        logging.error(f"Error in confirm_unread_start_handler: {e}")
+        try:
+            await event.answer("❌ Gagal memproses pesan. Silakan coba lagi.", alert=True)
+        except:
+            pass
 
 @bot.on(events.CallbackQuery(pattern=b"menu_autospam"))
 async def cb_as(event):

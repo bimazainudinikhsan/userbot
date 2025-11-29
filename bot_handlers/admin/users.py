@@ -1,3 +1,8 @@
+import asyncio
+import json
+import os
+from datetime import datetime
+
 from telethon import events, Button
 from config import bot, ADMIN_ID
 from database import (
@@ -5,10 +10,11 @@ from database import (
     delete_member, update_member_status, delete_history_by_user
 )
 from firebase_manager import clear_session_lock
-import os, json
-from datetime import datetime
-from state import ACTIVE_USERBOTS, ADMIN_ACTION_STATE, awaiting_reject_comment, pending_tx, user_tx_map, awaiting_photo, WAIT_NAME, WAIT_EMAIL, WAIT_PAYMENT_PROOF
-from state import ACTIVE_USERBOTS, ADMIN_ACTION_STATE, awaiting_reject_comment, pending_tx
+from state import (
+    ACTIVE_USERBOTS, ADMIN_ACTION_STATE, awaiting_reject_comment, 
+    pending_tx, user_tx_map, awaiting_photo, WAIT_NAME, WAIT_EMAIL, 
+    WAIT_PAYMENT_PROOF, LIVE_CHAT_SESSIONS
+)
 
 # Helper pagination
 def chunk_list(lst, n):
@@ -280,13 +286,132 @@ async def cb_confirm_delete(event):
     msg = "✅ User dihapus tuntas." if not residual else f"⚠️ Selesai dengan residu: {', '.join(residual)}"
     await event.edit(msg, buttons=[[Button.inline("🔙 List", b"cmd_admin_status")]])
 
-@bot.on(events.CallbackQuery(pattern=r"ADM_(MSG|EDIT):(.+)"))
-async def cb_admin_input_mode(event):
-    if event.sender_id != ADMIN_ID: return
-    mode, user_id = event.data.decode().split(":")[1:]
-    ADMIN_ACTION_STATE[ADMIN_ID] = {"action": mode, "target": user_id}
-    msg = "💬 **MODE LIVECHAT**" if mode == "MSG" else "✏️ **EDIT DATA**\nFormat: `Nama | Email`"
-    await event.edit(f"{msg}\n\nKetik `/batal` untuk keluar.")
+@bot.on(events.CallbackQuery(pattern=r"ADM_MSG:(.+)"))
+async def cb_admin_message_member(event):
+    if event.sender_id != ADMIN_ID: 
+        return
+        
+    user_id = int(event.data.decode().split(":")[1])
+    
+    # Check if member is online
+    is_online = user_id in ACTIVE_USERBOTS
+    if not is_online:
+        return await event.answer("❌ Member sedang offline. Tidak dapat mengirim pesan.", alert=True)
+    
+    # Check if already in a chat session
+    if user_id in LIVE_CHAT_SESSIONS:
+        return await event.answer("❌ Sudah ada sesi chat aktif dengan member ini.", alert=True)
+    
+    # Create a new chat session
+    task = asyncio.create_task(chat_timeout_checker(user_id))
+    LIVE_CHAT_SESSIONS[user_id] = {
+        'admin_id': ADMIN_ID,
+        'last_activity': asyncio.get_running_loop().time(),
+        'task': task
+    }
+    
+    # Notify admin
+    await event.edit(
+        f"💬 **CHAT DIMULAI**\n\n"
+        f"Anda sekarang dapat mengirim pesan ke member `{user_id}`.\n"
+        "Balas pesan ini untuk mengirim pesan.\n"
+        "Sesi akan berakhir setelah 5 menit tidak ada aktivitas.",
+        buttons=[
+            [Button.inline("� Akhiri Chat", f"END_CHAT:{user_id}")],
+            [Button.inline("🔙 Kembali ke Profil", f"ADM_USR:{user_id}")]
+        ]
+    )
+    
+    # Notify member
+    try:
+        await bot.send_message(
+            user_id,
+            "👨‍💼 **ADMIN MENGIRIM PESAN**\n\n"
+            "Anda menerima pesan dari Admin. Silakan balas pesan ini untuk membalas.\n"
+            "_(Chat otomatis berakhir jika 5 menit tidak aktif)_",
+            buttons=[[Button.inline("🛑 Akhiri Chat", b"end_chat_user")]]
+        )
+    except Exception as e:
+        await event.answer(f"❌ Gagal mengirim notifikasi ke member: {str(e)}", alert=True)
+        await end_chat_session(user_id, "Gagal mengirim notifikasi")
+        return
+
+# ==========================================
+# 4. CHAT SESSION MANAGEMENT
+# ==========================================
+
+async def chat_timeout_checker(user_id):
+    """Background task to check for chat session timeout"""
+    try:
+        while True:
+            await asyncio.sleep(30)  # Check every 30 seconds
+            if user_id not in LIVE_CHAT_SESSIONS:
+                break
+                
+            session = LIVE_CHAT_SESSIONS.get(user_id)
+            if not session:
+                break
+                
+            last_activity = session.get('last_activity', 0)
+            current_time = asyncio.get_running_loop().time()
+            
+            # 5 minutes timeout
+            if (current_time - last_activity) > 300:  # 300 seconds = 5 minutes
+                await end_chat_session(user_id, "Sesi berakhir (tidak ada aktivitas)")
+                break
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Error in chat_timeout_checker: {e}")
+
+async def end_chat_session(user_id, reason):
+    """End a chat session and clean up"""
+    if user_id not in LIVE_CHAT_SESSIONS:
+        return
+        
+    session = LIVE_CHAT_SESSIONS.pop(user_id, None)
+    if not session:
+        return
+        
+    # Cancel the timeout checker task
+    task = session.get('task')
+    if task and not task.done():
+        task.cancel()
+    
+    # Notify admin
+    try:
+        await bot.send_message(
+            session['admin_id'],
+            f"🛑 **Sesi Chat Berakhir**\n"
+            f"Dengan: `{user_id}`\n"
+            f"Alasan: {reason}",
+            buttons=[[Button.inline("🔙 Daftar Member", b"cmd_admin_status")]]
+        )
+    except Exception as e:
+        print(f"Error notifying admin: {e}")
+    
+    # Notify user
+    try:
+        await bot.send_message(
+            user_id,
+            f"🛑 **Sesi Chat dengan Admin Berakhir**\n{reason}",
+            buttons=[[Button.inline("🔙 Menu Utama", b"menu_start")]]
+        )
+    except Exception as e:
+        print(f"Error notifying user: {e}")
+
+@bot.on(events.CallbackQuery(pattern=r"END_CHAT:(.+)"))
+async def handle_admin_end_chat(event):
+    """Handler for admin ending the chat"""
+    if event.sender_id != ADMIN_ID:
+        return
+        
+    try:
+        user_id = int(event.data.decode().split(":")[1])
+        await end_chat_session(user_id, "Diakhiri oleh Admin")
+        await event.answer("✅ Chat diakhiri")
+    except Exception as e:
+        await event.answer(f"❌ Gagal mengakhiri chat: {str(e)}", alert=True)
 
 @bot.on(events.NewMessage(from_users=ADMIN_ID))
 async def admin_input_listener(event):
