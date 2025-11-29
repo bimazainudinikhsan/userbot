@@ -8,7 +8,7 @@ from database import find_member_row, get_member_permissions, update_member_stat
 from state import USER_PERMISSIONS, GLOBAL_FEATURE_FLAGS
 
 # Import Modules Baru (Tambahkan unread)
-from modules import faktur, autoreply, general, spambot, unread
+from modules import faktur, autoreply, general, unread, auto_spam, spambot, spambotpremium, spamai
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - USERBOT - %(levelname)s - %(message)s')

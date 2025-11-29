@@ -3,5 +3,23 @@
     "auto_reply": false,
     "reply_content": [],
     "replied_chats": []
+  },
+  "8022699623": {
+    "auto_reply": true,
+    "reply_content": [
+      {
+        "type": "text",
+        "text": "haii"
+      }
+    ],
+    "replied_chats": [
+      8335658617,
+      8579409848
+    ]
+  },
+  "None": {
+    "auto_reply": false,
+    "reply_content": [],
+    "replied_chats": []
   }
 }

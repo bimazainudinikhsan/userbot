@@ -22,5 +22,26 @@
         "template_bank": "-",
         "template_note": "-",
         "default_items": []
+    },
+    "8022699623": {
+        "rounddown_math": false,
+        "rounddown_limit": 1000,
+        "ppn": true,
+        "template_bank": "PEMBAYARAN HARUS DENGAN QRIS",
+        "template_note": "SESUAIKAN DENGAN QRIS",
+        "default_items": [
+            {
+                "desc": "biaya admin",
+                "price": 40000
+            },
+            {
+                "desc": "biaya ganti lcd",
+                "price": 90000
+            },
+            {
+                "desc": "biaya lain-lain",
+                "price": 20000
+            }
+        ]
     }
 }

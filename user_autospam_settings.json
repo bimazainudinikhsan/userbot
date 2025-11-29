@@ -1,0 +1,8 @@
+{
+    "8022699623": {
+        "enabled": false,
+        "message": "Halo, ini pesan otomatis.",
+        "delay": 60,
+        "target_type": "all"
+    }
+}
