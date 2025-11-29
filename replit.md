@@ -76,6 +76,12 @@ The bot runs automatically via the "Run Telegram Bot" workflow. It:
 
 ## Recent Changes (2025-11-29)
 
+### Fix: Trial Feature Toggle
+Fixed the trial feature so that when admin turns off trial in dashboard, users cannot see or click the trial button:
+- Changed `bot_handlers/nav.py` to use `GLOBAL_CONFIG` instead of `GLOBAL_FEATURE_FLAGS`
+- Now both admin toggle and user menu check the same variable
+- Default value set to `False` to match state.py initialization
+
 ### Setup for Replit Environment
 1. Installed Python 3.11 and all required dependencies:
    - telethon (Telegram API)

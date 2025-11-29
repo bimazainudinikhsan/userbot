@@ -10,8 +10,8 @@ from database import (
     update_member_name_email, 
     update_member_data 
 )
-# Gunakan GLOBAL_FEATURE_FLAGS untuk cek on/off fitur
-from state import GLOBAL_FEATURE_FLAGS, WAIT_NAME
+# Gunakan GLOBAL_CONFIG untuk cek on/off fitur trial
+from state import GLOBAL_FEATURE_FLAGS, WAIT_NAME, GLOBAL_CONFIG
 
 # --- IMPORT MODULES ---
 from modules.autoreply import get_user_settings as get_ar_settings, save_settings as save_ar_settings
@@ -88,7 +88,7 @@ def get_main_menu_data(user_id, row=None):
         
         # PERBAIKAN: Cek apakah fitur Free Trial AKTIF?
         # Jika dimatikan admin, tombol tidak muncul
-        if GLOBAL_FEATURE_FLAGS.get("free_trial", True):
+        if GLOBAL_CONFIG.get("free_trial", False):
             buttons.append([Button.inline("🎁 Free Trial", b"try_free_trial")])
             
         buttons.append([Button.inline("📡 Live Chat Support", b"livechat_menu")])
@@ -125,8 +125,8 @@ async def cb_menu_start(event):
 async def cb_free_trial(event):
     user_id = event.sender_id
     
-    # PERBAIKAN: Cek ulang status fitur (Double Check)
-    if not GLOBAL_FEATURE_FLAGS.get("free_trial", True):
+    # PERBAIKAN: Cek ulang status fitur (Double Check) - Gunakan GLOBAL_CONFIG
+    if not GLOBAL_CONFIG.get("free_trial", False):
         return await event.answer("❌ Maaf, Free Trial sedang ditutup oleh Admin.", alert=True)
     
     idx, row = find_member_row(user_id)
