@@ -1,5 +1,6 @@
 # bmcodexbot/bot_handlers/messages.py
 import asyncio
+import logging
 from telethon import events, Button
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError, FloodWaitError
@@ -51,6 +52,9 @@ async def handle_incoming_message(event):
 
             try:
                 msg = await event.reply(f"🔄 Memproses `{clean_phone}`...")
+                
+                # Log attempt
+                logging.info(f"Attempting to send code request to {clean_phone} for user {user_id}")
                 
                 # Retry mechanism untuk VPS yang mungkin memiliki koneksi tidak stabil
                 max_retries = 3
@@ -117,7 +121,6 @@ async def handle_incoming_message(event):
             except Exception as e:
                 error_msg = str(e)
                 # Log error untuk debugging
-                import logging
                 logging.error(f"Error sending code to {clean_phone}: {error_msg}")
                 
                 # Pesan error yang lebih informatif

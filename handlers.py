@@ -381,7 +381,9 @@ async def message_handler(event):
                 msg = await event.reply("🔄 Mengirim OTP...")
                 try:
                     ph = await client.send_code_request(phone)
-                    state.update({"phone_hash": ph, "phone": phone, "step": "code"})
+                    # ph may be an object with phone_code_hash attribute; store only the string
+                    phone_code_hash = getattr(ph, 'phone_code_hash', ph)
+                    state.update({"phone_code_hash": phone_code_hash, "phone": phone, "step": "code"})
                     await msg.edit("📩 Masukkan Kode OTP (spasi angka, cth: 1 2 3 4 5)")
                 except Exception as e: await msg.edit(f"❌ Error: {e}")
                 
@@ -389,7 +391,7 @@ async def message_handler(event):
                 code = text.replace(" ", "")
                 msg = await event.reply("🔄 Login...")
                 try:
-                    await client.sign_in(state["phone"], code, phone_code_hash=state["phone_hash"].phone_code_hash)
+                    await client.sign_in(state["phone"], code, phone_code_hash=state.get("phone_code_hash"))
                     await finalize_login(user_id, client, msg)
                 except SessionPasswordNeededError:
                     state["step"] = "password"

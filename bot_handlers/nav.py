@@ -424,7 +424,6 @@ async def cb_ur_e(event):
 @bot.on(events.CallbackQuery(pattern=b"unread_toggle"))
 async def unread_toggle_handler(event):
     current_status = is_unread_mode_enabled(event.sender_id)
-    set_unread_mode(event.sender_id, not current_status)
     await event.answer(f"Mode balas otomatis {'diaktifkan' if not current_status else 'dinonaktifkan'}", alert=False)
     await cb_ur(event)
 
@@ -523,7 +522,6 @@ async def unread_start_handler(event):
 @bot.on(events.CallbackQuery(pattern=b"confirm_unread_start"))
 async def confirm_unread_start_handler(event):
     try:
-        import logging
         
         user_id = event.sender_id
         
@@ -561,7 +559,6 @@ async def confirm_unread_start_handler(event):
         await process_userbot_unread(event, userbot_client, user_id, status_msg, settings)
         
     except Exception as e:
-        import logging
         logging.error(f"Error in confirm_unread_start_handler: {e}")
         try:
             await event.answer("❌ Gagal memproses pesan. Silakan coba lagi.", alert=True)
@@ -783,6 +780,5 @@ async def stop_unread_handler(event):
         else:
             await event.answer("⚠️ Proses sudah selesai atau tidak berjalan.", alert=True)
     except Exception as e:
-        import logging
         logging.error(f"Error in stop_unread_handler: {e}")
         await event.answer("❌ Terjadi kesalahan saat menghentikan proses.", alert=True)

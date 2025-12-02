@@ -1,7 +1,7 @@
 # state.py
 
 # Menyimpan status Login Userbot
-# user_id -> {step, client, phone, phone_hash}
+# user_id -> {step, client, phone, phone_code_hash}
 LOGIN_STATE = {}
 
 # Menyimpan Userbot yang sedang aktif

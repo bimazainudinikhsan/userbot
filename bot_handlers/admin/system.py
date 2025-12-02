@@ -5,6 +5,9 @@ from config import bot, ADMIN_ID
 from database import get_all_members_safe
 from state import ACTIVE_USERBOTS
 
+# Track the auto_update_watcher task untuk proper cleanup
+AUTO_UPDATE_TASK = None
+
 async def execute_restart_sequence(trigger_event=None):
     target_chat_id = ADMIN_ID
     status_msg = None
@@ -116,43 +119,77 @@ async def cb_restart(event):
 
 # --- Auto Update Watcher ---
 async def auto_update_watcher():
+    """
+    Background task untuk monitoring file trigger restart dan status maintenance.
+    Task ini akan di-cancel dengan benar saat shutdown.
+    """
     TRIGGER_PATH = "/home/bmcodex/userbot/restart_trigger.txt"
-    while True:
-        if os.path.exists(TRIGGER_PATH):
-            try: os.remove(TRIGGER_PATH) 
-            except: pass
-            await execute_restart_sequence(trigger_event=None)
-        try:
-            mc = read_manager_control()
-            if mc.get("system_status") == "maintenance":
-                start = mc.get("restart_started_at") or mc.get("shutdown_started_at")
-                last_n = mc.get("last_maintenance_notify")
-                if start:
-                    try:
-                        from datetime import datetime
-                        elapsed = (datetime.now() - datetime.fromisoformat(start)).total_seconds()
-                    except:
-                        elapsed = 0
-                    if elapsed > 300:
-                        if not last_n or (datetime.now() - datetime.fromisoformat(last_n)).total_seconds() > 300:
-                            members = get_all_members_safe()
-                            now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
-                            for row in members:
-                                try:
-                                    uid = str(row.get("User ID"))
-                                    if uid.isdigit() and int(uid) != ADMIN_ID:
-                                        await bot.send_message(int(uid), f"ℹ️ Pembaruan masih berlangsung sejak {now_str}. Mohon tunggu, proses memakan waktu lebih lama dari perkiraan.")
-                                except:
-                                    pass
-                            mc["last_maintenance_notify"] = datetime.now().isoformat()
-                            write_manager_control(mc)
-        except:
-            pass
-        await asyncio.sleep(5) 
+    try:
+        while True:
+            try:
+                if os.path.exists(TRIGGER_PATH):
+                    try: os.remove(TRIGGER_PATH) 
+                    except: pass
+                    await execute_restart_sequence(trigger_event=None)
+                
+                mc = read_manager_control()
+                if mc.get("system_status") == "maintenance":
+                    start = mc.get("restart_started_at") or mc.get("shutdown_started_at")
+                    last_n = mc.get("last_maintenance_notify")
+                    if start:
+                        try:
+                            elapsed = (datetime.now() - datetime.fromisoformat(start)).total_seconds()
+                        except:
+                            elapsed = 0
+                        if elapsed > 300:
+                            if not last_n or (datetime.now() - datetime.fromisoformat(last_n)).total_seconds() > 300:
+                                members = get_all_members_safe()
+                                now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
+                                for row in members:
+                                    try:
+                                        uid = str(row.get("User ID"))
+                                        if uid.isdigit() and int(uid) != ADMIN_ID:
+                                            await bot.send_message(int(uid), f"ℹ️ Pembaruan masih berlangsung sejak {now_str}. Mohon tunggu, proses memakan waktu lebih lama dari perkiraan.")
+                                    except:
+                                        pass
+                                mc["last_maintenance_notify"] = datetime.now().isoformat()
+                                write_manager_control(mc)
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                # Cleanup saat task di-cancel
+                print("[System] Auto update watcher cancelled (graceful shutdown)")
+                raise
+            except Exception as e:
+                print(f"[System] Watcher error: {e}")
+                await asyncio.sleep(5)
+    except asyncio.CancelledError:
+        pass  # Task is being cancelled, exit gracefully
+    finally:
+        print("[System] Auto update watcher stopped")
 
-try:
-    bot.loop.create_task(auto_update_watcher())
-except Exception as e: print(f"❌ Watcher Error: {e}")
+# Initialize auto_update_watcher task dengan proper management
+def init_auto_update_watcher():
+    global AUTO_UPDATE_TASK
+    try:
+        AUTO_UPDATE_TASK = bot.loop.create_task(auto_update_watcher())
+        print("✅ Auto update watcher started")
+    except Exception as e:
+        print(f"❌ Watcher Error: {e}")
+
+# Add cleanup handler saat bot disconnect
+@bot.on(events.Raw)
+async def on_bot_disconnect(update):
+    # Cleanup when bot is about to disconnect
+    if AUTO_UPDATE_TASK and not AUTO_UPDATE_TASK.done():
+        AUTO_UPDATE_TASK.cancel()
+        try:
+            await AUTO_UPDATE_TASK
+        except asyncio.CancelledError:
+            pass
+
+# Call init saat module di-import
+# NOTE: Do NOT initialize here - event loop not ready yet!
+# Will be initialized in main.py after bot.start()
 
 # --- Shutdown ---
 @bot.on(events.CallbackQuery(pattern=b"cmd_admin_shutdown"))
@@ -163,7 +200,17 @@ async def cb_shutdown_confirm(event):
 
 @bot.on(events.CallbackQuery(pattern=b"confirm_shutdown"))
 async def cb_shutdown_execute(event):
+    global AUTO_UPDATE_TASK
     if event.sender_id != ADMIN_ID: return
+    
+    # Cancel auto_update_watcher task
+    if AUTO_UPDATE_TASK and not AUTO_UPDATE_TASK.done():
+        AUTO_UPDATE_TASK.cancel()
+        try:
+            await AUTO_UPDATE_TASK
+        except asyncio.CancelledError:
+            pass
+    
     await event.edit("🔴 Bot Offline.")
     now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
     mc = read_manager_control()
@@ -171,6 +218,7 @@ async def cb_shutdown_execute(event):
     mc["shutdown_started_at"] = datetime.now().isoformat()
     write_manager_control(mc)
     _log_audit("shutdown_start", {"at": mc["shutdown_started_at"]})
+    
     members = get_all_members_safe()
     for row in members:
         try:

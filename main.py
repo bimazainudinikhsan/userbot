@@ -146,6 +146,13 @@ async def main():
     
     print(f"✅ Bot Manager Online: @{(await bot.get_me()).username}")
 
+    # Initialize auto_update_watcher now that event loop is running
+    try:
+        from bot_handlers.admin.system import init_auto_update_watcher
+        init_auto_update_watcher()
+    except Exception as e:
+        print(f"⚠️ Auto update watcher init error: {e}")
+
     try:
         if os.path.exists("RESTART_FLAG.json"):
             with open("RESTART_FLAG.json", "r", encoding="utf-8") as f:
@@ -333,20 +340,43 @@ async def main():
             pass 
 
     print(f"📊 Total Userbot Berjalan: {count}")
-    try:
-        await bot.run_until_disconnected()
-    finally:
+
+    # Loop agar bot tidak langsung mati saat koneksi Telegram putus berkali-kali
+    # dan mencoba reconnect otomatis setelah jeda.
+    while True:
         try:
-            if os.path.exists(LOCK_FILE):
-                os.remove(LOCK_FILE)
-            # Lepas remote locks untuk semua user yang aktif
+            await bot.run_until_disconnected()
+            # Jika keluar secara normal (disconnect terkelola), break loop
+            break
+        except ConnectionError as e:
+            # Error khas Telethon: "Connection to Telegram failed 5 time(s)"
+            print(f"⚠️ Koneksi ke Telegram gagal: {e}")
+            print("🔄 Menunggu koneksi internet kembali sebelum mencoba lagi...")
             try:
-                for uid in list(ACTIVE_USERBOTS.keys()):
-                    clear_session_lock(str(uid))
+                await bot.disconnect()
             except:
                 pass
+            # Pastikan internet sudah kembali sebelum retry
+            await wait_for_internet()
+            # Ulangi loop untuk start lagi run_until_disconnected
+            continue
+        except Exception as e:
+            # Jika ada error lain yang tidak terduga, log dan keluar agar tidak loop tanpa henti
+            print(f"❌ Error tak terduga di run_until_disconnected: {e}")
+            break
+
+    # Cleanup hanya dilakukan saat benar-benar berhenti dari loop di atas
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+        # Lepas remote locks untuk semua user yang aktif
+        try:
+            for uid in list(ACTIVE_USERBOTS.keys()):
+                clear_session_lock(str(uid))
         except:
             pass
+    except:
+        pass
 
 if __name__ == "__main__":
     if platform.system() == 'Windows':

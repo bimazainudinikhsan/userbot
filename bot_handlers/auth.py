@@ -2,6 +2,9 @@
 import time
 import json
 import os
+import socket
+import asyncio
+import logging
 from telethon import events, Button, TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import MessageNotModifiedError
@@ -9,6 +12,9 @@ from config import bot, API_ID, API_HASH
 from database import find_member_row, get_all_members_safe
 from state import ACTIVE_USERBOTS, LOGIN_STATE
 from modules.autoreply import get_user_settings
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
 
 # --- MENU SETTING & KONEKSI ---
 @bot.on(events.CallbackQuery(pattern=b"menu_connect_ub"))
@@ -45,6 +51,7 @@ async def cb_connect_ub_menu(event):
     
     buttons = [
         [Button.inline("🔌 Hubungkan ke Userbot", b"start_auth_process")],
+        [Button.inline("🔍 Cek Server & Koneksi", b"check_server_connection")],
         [Button.inline("🔄 Cek Koneksi Sekarang", b"menu_connect_ub")],
         [Button.inline("⬅️ Menu Utama", b"menu_start")]
     ]
@@ -55,6 +62,111 @@ async def cb_connect_ub_menu(event):
         await event.answer("✅ Status sudah paling update.")
     except Exception as e:
         print(f"Error updating menu: {e}")
+
+# --- FUNGSI CEK SERVER & KONEKSI ---
+async def check_server_connectivity():
+    """Cek konektivitas server ke Telegram API"""
+    results = {
+        "internet": {"status": False, "message": ""},
+        "dns": {"status": False, "message": ""},
+        "telegram_api": {"status": False, "message": ""},
+        "telegram_dc": {"status": False, "message": ""}
+    }
+    
+    # 1. Cek Internet Umum
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=5)
+        results["internet"] = {"status": True, "message": "✅ Koneksi internet OK"}
+    except Exception as e:
+        results["internet"] = {"status": False, "message": f"❌ Tidak ada internet: {str(e)[:50]}"}
+    
+    # 2. Cek DNS Resolution
+    try:
+        telegram_ip = socket.gethostbyname("api.telegram.org")
+        results["dns"] = {"status": True, "message": f"✅ DNS OK (api.telegram.org → {telegram_ip})"}
+    except Exception as e:
+        results["dns"] = {"status": False, "message": f"❌ DNS gagal: {str(e)[:50]}"}
+    
+    # 3. Cek Koneksi ke Telegram API
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex(("api.telegram.org", 443))
+        sock.close()
+        if result == 0:
+            results["telegram_api"] = {"status": True, "message": "✅ Port 443 (HTTPS) dapat diakses"}
+        else:
+            results["telegram_api"] = {"status": False, "message": f"❌ Port 443 tidak dapat diakses (code: {result})"}
+    except Exception as e:
+        results["telegram_api"] = {"status": False, "message": f"❌ Gagal cek port: {str(e)[:50]}"}
+    
+    # 4. Cek Koneksi ke Telegram DC (Data Center)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex(("149.154.175.50", 443))  # DC1
+        sock.close()
+        if result == 0:
+            results["telegram_dc"] = {"status": True, "message": "✅ Telegram DC dapat diakses"}
+        else:
+            results["telegram_dc"] = {"status": False, "message": f"❌ Telegram DC tidak dapat diakses (code: {result})"}
+    except Exception as e:
+        results["telegram_dc"] = {"status": False, "message": f"❌ Gagal cek DC: {str(e)[:50]}"}
+    
+    return results
+
+@bot.on(events.CallbackQuery(pattern=b"check_server_connection"))
+async def cb_check_server_connection(event):
+    """Handler untuk cek koneksi server"""
+    msg = await event.edit("🔍 Memeriksa koneksi server...")
+    
+    try:
+        results = await check_server_connectivity()
+        
+        # Buat laporan
+        report_lines = ["🔍 **HASIL CEK SERVER & KONEKSI**\n"]
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━\n")
+        
+        all_ok = True
+        for key, result in results.items():
+            report_lines.append(f"{result['message']}\n")
+            if not result['status']:
+                all_ok = False
+        
+        report_lines.append("\n━━━━━━━━━━━━━━━━━━━━\n")
+        
+        if all_ok:
+            report_lines.append("✅ **Semua cek berhasil!**\n")
+            report_lines.append("Server siap untuk mengirim kode OTP.")
+        else:
+            report_lines.append("⚠️ **Beberapa cek gagal!**\n")
+            report_lines.append("**Kemungkinan masalah:**\n")
+            report_lines.append("• Firewall memblokir koneksi\n")
+            report_lines.append("• DNS server tidak dapat resolve\n")
+            report_lines.append("• Koneksi internet tidak stabil\n")
+            report_lines.append("• Port 443 diblokir\n\n")
+            report_lines.append("**Solusi:**\n")
+            report_lines.append("• Periksa firewall/iptables\n")
+            report_lines.append("• Periksa DNS settings\n")
+            report_lines.append("• Pastikan port 443 terbuka\n")
+            report_lines.append("• Restart network service")
+        
+        report_text = "".join(report_lines)
+        
+        buttons = [
+            [Button.inline("🔄 Cek Lagi", b"check_server_connection")],
+            [Button.inline("🔌 Coba Login", b"start_auth_process")],
+            [Button.inline("⬅️ Kembali", b"menu_connect_ub")]
+        ]
+        
+        await msg.edit(report_text, buttons=buttons)
+        
+    except Exception as e:
+        logging.error(f"Error checking server connection: {e}")
+        await msg.edit(
+            f"❌ **Error saat cek server:**\n`{str(e)[:200]}`",
+            buttons=[[Button.inline("🔄 Coba Lagi", b"check_server_connection")], [Button.inline("⬅️ Kembali", b"menu_connect_ub")]]
+        )
 
 # --- PROSES LOGIN ---
 @bot.on(events.CallbackQuery(pattern=b"start_auth_process"))
@@ -72,8 +184,32 @@ async def cb_start_auth(event):
         except: pass
         if user_id in ACTIVE_USERBOTS: del ACTIVE_USERBOTS[user_id]
 
+    # Cek koneksi server terlebih dahulu
+    check_msg = await event.edit("🔍 Memeriksa koneksi server...")
+    try:
+        server_check = await check_server_connectivity()
+        if not server_check["internet"]["status"]:
+            return await check_msg.edit(
+                f"❌ **Tidak ada koneksi internet**\n\n"
+                f"{server_check['internet']['message']}\n\n"
+                f"**Solusi:**\n"
+                f"• Periksa koneksi internet server\n"
+                f"• Restart network service\n"
+                f"• Hubungi provider VPS",
+                buttons=[[Button.inline("🔄 Cek Lagi", b"start_auth_process")], [Button.inline("⬅️ Kembali", b"menu_connect_ub")]]
+            )
+        if not server_check["dns"]["status"]:
+            logging.warning(f"DNS check failed: {server_check['dns']['message']}")
+        if not server_check["telegram_api"]["status"]:
+            logging.warning(f"Telegram API check failed: {server_check['telegram_api']['message']}")
+    except Exception as e:
+        logging.error(f"Error during server check: {e}")
+        # Lanjutkan meskipun cek gagal, mungkin hanya masalah sementara
+    
     # Inisialisasi Client Baru
     try:
+        await check_msg.edit("🔄 Menyiapkan koneksi ke Telegram...")
+        
         # Membuat folder sesi jika belum ada
         session_folder = "botsession"
         if not os.path.exists(session_folder):
@@ -96,9 +232,41 @@ async def cb_start_auth(event):
             timeout=30,
             request_retries=3
         )
-        await new_client.connect()
+        
+        # Coba connect dengan timeout
+        try:
+            await asyncio.wait_for(new_client.connect(), timeout=15)
+            logging.info(f"Successfully connected to Telegram for user {user_id}")
+        except asyncio.TimeoutError:
+            await new_client.disconnect()
+            raise Exception("Timeout saat menghubungkan ke Telegram. Periksa koneksi internet server.")
+        except Exception as e:
+            await new_client.disconnect()
+            raise e
+            
     except Exception as e:
-        return await event.edit(f"❌ **Gagal Connect ke Server Telegram:**\n`{str(e)}`\nSilakan coba lagi beberapa saat lagi.")
+        error_msg = str(e)
+        logging.error(f"Error connecting to Telegram for user {user_id}: {error_msg}")
+        
+        detailed_error = (
+            f"❌ **Gagal Connect ke Server Telegram**\n\n"
+            f"Error: `{error_msg[:200]}`\n\n"
+            f"**Kemungkinan penyebab:**\n"
+            f"• Koneksi internet server tidak stabil\n"
+            f"• Firewall memblokir koneksi ke Telegram\n"
+            f"• DNS tidak dapat resolve domain Telegram\n"
+            f"• Port 443 diblokir\n\n"
+            f"**Solusi:**\n"
+            f"• Gunakan tombol 'Cek Server & Koneksi' untuk diagnosa\n"
+            f"• Periksa firewall/iptables\n"
+            f"• Pastikan port 443 terbuka\n"
+            f"• Coba lagi dalam beberapa saat"
+        )
+        
+        return await check_msg.edit(
+            detailed_error,
+            buttons=[[Button.inline("🔍 Cek Server", b"check_server_connection")], [Button.inline("🔄 Coba Lagi", b"start_auth_process")], [Button.inline("⬅️ Kembali", b"menu_connect_ub")]]
+        )
     
     # Reset State Login
     LOGIN_STATE[user_id] = {
@@ -222,7 +390,6 @@ async def cb_retry_send_code(event):
         
     except Exception as e:
         error_msg = str(e)
-        import logging
         logging.error(f"Error retrying send code to {phone}: {error_msg}")
         
         if "Timeout" in error_msg or "timeout" in error_msg.lower():

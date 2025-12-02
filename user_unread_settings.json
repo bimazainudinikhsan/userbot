@@ -15,5 +15,12 @@
         "max_retries": 3,
         "last_used": "2025-11-30T06:09:34.385277",
         "last_updated": "2025-11-30T06:09:34.385655"
+    },
+    "8505538867": {
+        "message": "Maaf baru balas, ada yang bisa dibantu? (Auto Reply Unread)",
+        "typing_duration": 3,
+        "delay_between_chats": 5,
+        "max_retries": 3,
+        "last_used": null
     }
 }
